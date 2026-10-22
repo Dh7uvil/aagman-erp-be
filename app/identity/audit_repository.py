@@ -1,0 +1,196 @@
+"""Database access for append-only audit logs."""
+
+from collections.abc import Sequence
+from uuid import UUID
+
+from sqlalchemy import Select, func, or_, select
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.sql.elements import ColumnElement
+
+from app.common.models.audit_log import AuditLog
+from app.common.repositories.search import column_ilike, ilike_pattern
+from app.common.schemas.filters import BaseFilter
+from app.common.schemas.pagination import PageParams
+from app.core.enums import AuditAction, AuditStatus, IDENTITY_MODULE
+from app.identity.models import User
+
+
+class AuditLogRepository:
+    def __init__(self, session: AsyncSession) -> None:
+        self.session = session
+
+    def _criteria(
+        self,
+        *,
+        common_filter: BaseFilter | None = None,
+        module: str | None = None,
+        action: str | None = None,
+        user_id: UUID | None = None,
+        entity_type: str | None = None,
+        entity_id: UUID | None = None,
+    ) -> list[ColumnElement[bool]]:
+        criteria: list[ColumnElement[bool]] = []
+        if module is not None:
+            criteria.append(AuditLog.module == module)
+        if action is not None:
+            criteria.append(AuditLog.action == action)
+        if user_id is not None:
+            criteria.append(AuditLog.user_id == user_id)
+        if entity_type is not None:
+            criteria.append(AuditLog.entity_type == entity_type)
+        if entity_id is not None:
+            criteria.append(AuditLog.entity_id == entity_id)
+        if common_filter is not None:
+            if common_filter.date_from is not None:
+                criteria.append(AuditLog.created_at >= common_filter.date_from)
+            if common_filter.date_to is not None:
+                criteria.append(AuditLog.created_at <= common_filter.date_to)
+            if common_filter.search is not None:
+                pattern = ilike_pattern(common_filter.search)
+                criteria.append(
+                    or_(
+                        column_ilike(AuditLog.action, pattern),
+                        column_ilike(AuditLog.module, pattern),
+                        column_ilike(AuditLog.entity_type, pattern),
+                        column_ilike(AuditLog.ip_address, pattern),
+                        column_ilike(AuditLog.user_agent, pattern),
+                        column_ilike(User.name, pattern),
+                        column_ilike(User.email, pattern),
+                        column_ilike(User.phone, pattern),
+                    )
+                )
+        return criteria
+
+    def _statement(
+        self,
+        *,
+        common_filter: BaseFilter | None = None,
+        module: str | None = None,
+        action: str | None = None,
+        user_id: UUID | None = None,
+        entity_type: str | None = None,
+        entity_id: UUID | None = None,
+    ) -> Select[tuple[AuditLog]]:
+        statement = select(AuditLog)
+        if common_filter is not None and common_filter.search is not None:
+            statement = statement.outerjoin(User, User.id == AuditLog.user_id)
+        return statement.where(
+            *self._criteria(
+                common_filter=common_filter,
+                module=module,
+                action=action,
+                user_id=user_id,
+                entity_type=entity_type,
+                entity_id=entity_id,
+            )
+        )
+
+    async def list_logs(
+        self,
+        *,
+        page: PageParams,
+        common_filter: BaseFilter | None = None,
+        module: str | None = None,
+        action: str | None = None,
+        user_id: UUID | None = None,
+        entity_type: str | None = None,
+        entity_id: UUID | None = None,
+    ) -> tuple[Sequence[AuditLog], int]:
+        allowed_sort = frozenset({"created_at", "action", "module"})
+        sort_by = common_filter.sort_by if common_filter else "created_at"
+        sort_order = common_filter.sort_order if common_filter else "desc"
+        if sort_by not in allowed_sort:
+            msg = f"sort field is not allowed: {sort_by}"
+            raise ValueError(msg)
+        sort_column = getattr(AuditLog, sort_by)
+        ordering = sort_column.desc() if sort_order == "desc" else sort_column.asc()
+
+        statement = (
+            self._statement(
+                common_filter=common_filter,
+                module=module,
+                action=action,
+                user_id=user_id,
+                entity_type=entity_type,
+                entity_id=entity_id,
+            )
+            .order_by(ordering)
+            .offset(page.offset)
+            .limit(page.page_size)
+        )
+        count_base = select(func.count()).select_from(AuditLog)
+        if common_filter is not None and common_filter.search is not None:
+            count_base = count_base.outerjoin(User, User.id == AuditLog.user_id)
+        count_statement = count_base.where(
+            *self._criteria(
+                common_filter=common_filter,
+                module=module,
+                action=action,
+                user_id=user_id,
+                entity_type=entity_type,
+                entity_id=entity_id,
+            )
+        )
+        result = await self.session.execute(statement)
+        total = await self.session.scalar(count_statement)
+        return result.scalars().all(), int(total or 0)
+
+    async def export_logs(
+        self,
+        *,
+        common_filter: BaseFilter | None = None,
+        module: str | None = None,
+        action: str | None = None,
+        user_id: UUID | None = None,
+        entity_type: str | None = None,
+        entity_id: UUID | None = None,
+    ) -> Sequence[AuditLog]:
+        statement = self._statement(
+            common_filter=common_filter,
+            module=module,
+            action=action,
+            user_id=user_id,
+            entity_type=entity_type,
+            entity_id=entity_id,
+        ).order_by(AuditLog.created_at.desc())
+        result = await self.session.execute(statement)
+        return result.scalars().all()
+
+    async def summarize(
+        self,
+        *,
+        common_filter: BaseFilter | None = None,
+    ) -> tuple[int, int, int, int]:
+        criteria = self._criteria(common_filter=common_filter)
+        total = await self.session.scalar(
+            select(func.count()).select_from(AuditLog).where(*criteria)
+        )
+        unique_users = await self.session.scalar(
+            select(func.count(func.distinct(AuditLog.user_id)))
+            .select_from(AuditLog)
+            .where(*criteria, AuditLog.user_id.is_not(None))
+        )
+        failed_attempts = await self.session.scalar(
+            select(func.count())
+            .select_from(AuditLog)
+            .where(
+                *criteria,
+                AuditLog.action == AuditAction.LOGIN,
+                AuditLog.status == AuditStatus.FAILED,
+            )
+        )
+        admin_actions = await self.session.scalar(
+            select(func.count())
+            .select_from(AuditLog)
+            .where(*criteria, AuditLog.module == IDENTITY_MODULE)
+        )
+        return (
+            int(total or 0),
+            int(unique_users or 0),
+            int(failed_attempts or 0),
+            int(admin_actions or 0),
+        )
+
+    async def get(self, audit_log_id: UUID) -> AuditLog | None:
+        result = await self.session.execute(select(AuditLog).where(AuditLog.id == audit_log_id))
+        return result.scalar_one_or_none()
