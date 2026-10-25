@@ -22,8 +22,11 @@ class BranchStatus(StrEnum):
 
 
 class AddressType(StrEnum):
+    BILL_TO = "BILL_TO"
     BRANCH = "BRANCH"
+    COMPANY = "COMPANY"
     HEADQUARTERS = "HEADQUARTERS"
+    SHIP_TO = "SHIP_TO"
     WAREHOUSE = "WAREHOUSE"
     OTHER = "OTHER"
 

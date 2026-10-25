@@ -32,6 +32,10 @@ WAREHOUSE_CREATE = build_permission(IDENTITY_MODULE, "warehouse", "create")
 WAREHOUSE_READ = build_permission(IDENTITY_MODULE, "warehouse", "read")
 WAREHOUSE_UPDATE = build_permission(IDENTITY_MODULE, "warehouse", "update")
 WAREHOUSE_DELETE = build_permission(IDENTITY_MODULE, "warehouse", "delete")
+COMPANY_CREATE = build_permission(IDENTITY_MODULE, "company", "create")
+COMPANY_READ = build_permission(IDENTITY_MODULE, "company", "read")
+COMPANY_UPDATE = build_permission(IDENTITY_MODULE, "company", "update")
+COMPANY_DELETE = build_permission(IDENTITY_MODULE, "company", "delete")
 AUDIT_LOG_READ = build_permission(IDENTITY_MODULE, "audit_log", "read")
 
 _CATALOG: dict[str, tuple[str, ...]] = {
@@ -42,6 +46,7 @@ _CATALOG: dict[str, tuple[str, ...]] = {
     "branch": ("create", "read", "update", "delete"),
     "department": ("create", "read", "update", "delete"),
     "warehouse": ("create", "read", "update", "delete"),
+    "company": ("create", "read", "update", "delete"),
     "audit_log": ("read",),
 }
 

@@ -84,6 +84,11 @@ TABLE_CATALOG: dict[str, TableCatalogEntry] = {
             *_hidden("address", "created_at", "updated_at"),
         ),
         _entry(
+            "identity.companies",
+            ("name", "email", "phone", "address"),
+            *_hidden("bill_to_address", "ship_to_address", "id", "created_at", "updated_at"),
+        ),
+        _entry(
             "identity.audit_logs",
             (
                 "log_id",

@@ -809,6 +809,87 @@ class AuditLogSummaryResponse(BaseModel):
     admin_actions: int
 
 
+def _normalize_optional_email(value: str | None) -> str | None:
+    if value is None:
+        return None
+    normalized = value.strip().lower()
+    if not normalized:
+        return None
+    if "@" not in normalized:
+        raise ValueError("email must be a valid email address")
+    if len(normalized) > 255:
+        raise ValueError("email must be at most 255 characters")
+    return normalized
+
+
+class CompanyFilter(BaseFilter):
+    allowed_sort_fields: ClassVar[frozenset[str]] = frozenset(
+        {"created_at", "updated_at", "name", "email"}
+    )
+
+
+class CompanyCreate(BaseModel):
+    name: str = Field(min_length=1, max_length=200)
+    email: str | None = Field(default=None, max_length=255)
+    phone: str | None = Field(default=None, max_length=50)
+    address: AddressPayload | None = None
+    bill_to_address: AddressPayload | None = None
+    ship_to_address: AddressPayload | None = None
+
+    @field_validator("name")
+    @classmethod
+    def normalize_name(cls, value: str) -> str:
+        return normalize_required_text(value, field_name="name")
+
+    @field_validator("email")
+    @classmethod
+    def normalize_email(cls, value: str | None) -> str | None:
+        return _normalize_optional_email(value)
+
+    @field_validator("phone")
+    @classmethod
+    def normalize_phone(cls, value: str | None) -> str | None:
+        return _normalize_optional_phone(value)
+
+
+class CompanyUpdate(BaseModel):
+    name: str | None = Field(default=None, min_length=1, max_length=200)
+    email: str | None = Field(default=None, max_length=255)
+    phone: str | None = Field(default=None, max_length=50)
+    address: AddressPayload | None = None
+    bill_to_address: AddressPayload | None = None
+    ship_to_address: AddressPayload | None = None
+
+    @field_validator("name")
+    @classmethod
+    def normalize_name(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        return normalize_required_text(value, field_name="name")
+
+    @field_validator("email")
+    @classmethod
+    def normalize_email(cls, value: str | None) -> str | None:
+        return _normalize_optional_email(value)
+
+    @field_validator("phone")
+    @classmethod
+    def normalize_phone(cls, value: str | None) -> str | None:
+        return _normalize_optional_phone(value)
+
+
+class CompanyResponse(BaseModel):
+    id: UUID
+    name: str
+    email: str | None
+    phone: str | None
+    address: AddressResponse | None = None
+    bill_to_address: AddressResponse | None = None
+    ship_to_address: AddressResponse | None = None
+    created_at: datetime
+    updated_at: datetime
+
+
 class WarehouseFilter(BaseFilter):
     allowed_sort_fields: ClassVar[frozenset[str]] = frozenset(
         {"created_at", "updated_at", "name", "code"}
