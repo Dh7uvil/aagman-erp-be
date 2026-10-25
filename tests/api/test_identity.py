@@ -284,6 +284,128 @@ async def test_audit_logs_are_read_only(
     assert response.status_code == 405
 
 
+async def test_company_crud_duplicate_name_and_permission(client: AsyncClient) -> None:
+    admin_email, password = await provision_admin()
+    admin_headers = await login_headers(client, admin_email, password)
+    name = f"Acme-{uuid4().hex[:6]}"
+
+    create = await client.post(
+        "/api/v1/companies",
+        headers=admin_headers,
+        json={
+            "name": name,
+            "email": "contact@acme.example",
+            "phone": "+1-555-0100",
+            "address": {
+                "address_line_1": "1 Market St",
+                "city": "San Francisco",
+                "country_code": "US",
+            },
+            "bill_to_address": {
+                "address_line_1": "1 Market St",
+                "city": "San Francisco",
+                "country_code": "US",
+            },
+            "ship_to_address": {
+                "address_line_1": "99 Ship Lane",
+                "city": "Oakland",
+                "country_code": "US",
+            },
+        },
+    )
+    assert create.status_code == 201, create.text
+    company_id = create.json()["data"]["id"]
+    assert create.json()["data"]["name"] == name
+    assert create.json()["data"]["email"] == "contact@acme.example"
+    assert create.json()["data"]["bill_to_address"]["city"] == "San Francisco"
+    assert create.json()["data"]["ship_to_address"]["city"] == "Oakland"
+
+    before = await _count_audit(action="CREATE", entity_type="company")
+    duplicate = await client.post(
+        "/api/v1/companies",
+        headers=admin_headers,
+        json={"name": name},
+    )
+    assert duplicate.status_code == 409, duplicate.text
+    after = await _count_audit(action="CREATE", entity_type="company")
+    assert after == before
+
+    listed = await client.get("/api/v1/companies", headers=admin_headers)
+    assert listed.status_code == 200
+    assert any(row["id"] == company_id for row in listed.json()["data"])
+
+    detail = await client.get(f"/api/v1/companies/{company_id}", headers=admin_headers)
+    assert detail.status_code == 200
+    assert detail.json()["data"]["address"]["city"] == "San Francisco"
+
+    updated = await client.patch(
+        f"/api/v1/companies/{company_id}",
+        headers=admin_headers,
+        json={"phone": "+1-555-0199"},
+    )
+    assert updated.status_code == 200
+    assert updated.json()["data"]["phone"] == "+1-555-0199"
+
+    deleted = await client.delete(f"/api/v1/companies/{company_id}", headers=admin_headers)
+    assert deleted.status_code == 200
+
+    role_response = await client.post(
+        "/api/v1/roles",
+        headers=admin_headers,
+        json={"name": f"NoCompany-{uuid4().hex[:6]}", "description": "No company create"},
+    )
+    assert role_response.status_code == 201, role_response.text
+    role_id = role_response.json()["data"]["id"]
+
+    matrix = await client.get(
+        f"/api/v1/permissions/matrix?role_id={role_id}",
+        headers=admin_headers,
+    )
+    assert matrix.status_code == 200, matrix.text
+    company_read_id = None
+    for module in matrix.json()["data"]["modules"]:
+        if module["module"] != "identity":
+            continue
+        for resource in module["resources"]:
+            if resource["resource"] != "company":
+                continue
+            for action in resource["actions"]:
+                if action["action"] == "read":
+                    company_read_id = action["id"]
+                    break
+    assert company_read_id is not None
+    assign = await client.put(
+        f"/api/v1/roles/{role_id}/permissions",
+        headers=admin_headers,
+        json={"permission_ids": [company_read_id]},
+    )
+    assert assign.status_code == 200, assign.text
+
+    viewer_email = f"company-viewer-{uuid4().hex[:8]}@example.com"
+    create_user = await client.post(
+        "/api/v1/users",
+        headers=admin_headers,
+        json={
+            "name": "Company Viewer",
+            "email": viewer_email,
+            "password": ADMIN_PASSWORD,
+            "role_ids": [role_id],
+        },
+    )
+    assert create_user.status_code in {200, 201}, create_user.text
+    viewer_headers = await login_headers(client, viewer_email, password)
+
+    can_list = await client.get("/api/v1/companies", headers=viewer_headers)
+    assert can_list.status_code == 200
+
+    denied = await client.post(
+        "/api/v1/companies",
+        headers=viewer_headers,
+        json={"name": f"Blocked-{uuid4().hex[:6]}"},
+    )
+    assert denied.status_code == 403
+
+
 async def test_user_status_disabled_in_database(client: AsyncClient) -> None:
     admin_email, password = await provision_admin()
     headers = await login_headers(client, admin_email, password)

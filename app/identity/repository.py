@@ -18,6 +18,7 @@ from app.core.enums import SYSTEM_ADMIN_ROLE_NAME, UserStatus
 from app.core.permissions import build_permission
 from app.db.base import Base
 from app.identity.models import (
+    Company,
     Department,
     Organization,
     PasswordResetToken,
@@ -449,6 +450,42 @@ class AccessRepository:
         )
         total = await self.session.scalar(statement)
         return int(total or 0)
+
+
+class CompanyRepository:
+    def __init__(self, session: AsyncSession) -> None:
+        from app.common.repositories.base import BaseRepository
+        from app.common.repositories.search import address_search
+
+        self._repo = BaseRepository(
+            session,
+            Company,
+            allowed_sort_fields=frozenset({"created_at", "updated_at", "name", "email"}),
+            allowed_filter_fields=frozenset(),
+            search_fields=frozenset({"name", "email", "phone"}),
+            related_searches=(address_search("address_id"),),
+        )
+
+    async def get(self, company_id: UUID) -> Company | None:
+        return await self._repo.get(company_id)
+
+    async def list(
+        self,
+        *,
+        page: PageParams,
+        common_filter: BaseFilter | None = None,
+        filters: Mapping[str, object] | None = None,
+    ) -> tuple[Sequence[Company], int]:
+        return await self._repo.list(page=page, common_filter=common_filter, filters=filters)
+
+    async def create(self, values: Mapping[str, object]) -> Company:
+        return await self._repo.create(values)
+
+    async def update(self, company_id: UUID, values: Mapping[str, object]) -> Company | None:
+        return await self._repo.update(company_id, values)
+
+    async def soft_delete(self, company_id: UUID) -> Company | None:
+        return await self._repo.soft_delete(company_id)
 
 
 class WarehouseRepository:

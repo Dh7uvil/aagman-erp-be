@@ -268,6 +268,37 @@ class Department(SoftDeleteModel):
     )
 
 
+class Company(SoftDeleteModel):
+    __tablename__ = "companies"
+    __table_args__ = (
+        Index(
+            "uq_companies_name_active",
+            "name",
+            unique=True,
+            postgresql_where=text("deleted_at IS NULL"),
+        ),
+    )
+
+    name: Mapped[str] = mapped_column(String(200), nullable=False)
+    email: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    phone: Mapped[str | None] = mapped_column(String(50), nullable=True)
+    address_id: Mapped[UUID | None] = mapped_column(
+        PostgreSQLUUID(as_uuid=True),
+        ForeignKey("addresses.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    bill_to_address_id: Mapped[UUID | None] = mapped_column(
+        PostgreSQLUUID(as_uuid=True),
+        ForeignKey("addresses.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    ship_to_address_id: Mapped[UUID | None] = mapped_column(
+        PostgreSQLUUID(as_uuid=True),
+        ForeignKey("addresses.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+
+
 class Warehouse(AuditUserMixin, IsActiveMixin, SoftDeleteModel):
     __tablename__ = "warehouses"
     __table_args__ = (

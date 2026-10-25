@@ -26,6 +26,7 @@ OPENAPI_TAGS: list[dict[str, str]] = [
     {"name": "Branches", "description": "Operating locations."},
     {"name": "Departments", "description": "Departments within branches."},
     {"name": "Warehouses", "description": "Warehouse master data."},
+    {"name": "Companies", "description": "Company master data."},
     {"name": "Audit Logs", "description": "Append-only audit trail."},
 ]
 

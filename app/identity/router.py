@@ -35,6 +35,10 @@ from app.identity.catalog import (
     USER_DELETE,
     USER_READ,
     USER_UPDATE,
+    COMPANY_CREATE,
+    COMPANY_DELETE,
+    COMPANY_READ,
+    COMPANY_UPDATE,
     WAREHOUSE_CREATE,
     WAREHOUSE_DELETE,
     WAREHOUSE_READ,
@@ -43,6 +47,7 @@ from app.identity.catalog import (
 from app.identity.dependencies import (
     AuditLogServiceDependency,
     AuthServiceDependency,
+    CompanyServiceDependency,
     OrganizationServiceDependency,
     WarehouseServiceDependency,
 )
@@ -58,6 +63,10 @@ from app.identity.schemas import (
     BranchFilter,
     BranchResponse,
     BranchUpdate,
+    CompanyCreate,
+    CompanyFilter,
+    CompanyResponse,
+    CompanyUpdate,
     ChangePasswordRequest,
     DepartmentCreate,
     DepartmentFilter,
@@ -104,6 +113,7 @@ organization_router = APIRouter(prefix="/organization", tags=["Organization"])
 branches_router = APIRouter(prefix="/branches", tags=["Branches"])
 departments_router = APIRouter(prefix="/departments", tags=["Departments"])
 warehouses_router = APIRouter(prefix="/warehouses", tags=["Warehouses"])
+companies_router = APIRouter(prefix="/companies", tags=["Companies"])
 audit_logs_router = APIRouter(prefix="/audit-logs", tags=["Audit Logs"])
 
 
@@ -595,6 +605,60 @@ async def delete_department(
     return ApiResponse(data=department, message="Department deleted successfully")
 
 
+@companies_router.get("", response_model=ApiResponse[list[CompanyResponse]])
+async def list_companies(
+    page: PaginationDependency,
+    service: CompanyServiceDependency,
+    filters: Annotated[CompanyFilter, Depends()],
+    _: Annotated[CurrentUser, Depends(require_permission(COMPANY_READ))],
+) -> ApiResponse[list[CompanyResponse]]:
+    rows, total = await service.list(page=page, common_filter=filters)
+    return paginated_response(rows, params=page, total=total)
+
+
+@companies_router.post("", response_model=ApiResponse[CompanyResponse], status_code=status.HTTP_201_CREATED)
+async def create_company(
+    payload: CompanyCreate,
+    current_user: CurrentUserDependency,
+    service: CompanyServiceDependency,
+    _: Annotated[CurrentUser, Depends(require_permission(COMPANY_CREATE))],
+) -> ApiResponse[CompanyResponse]:
+    row = await service.create(payload, actor_user_id=current_user.user_id)
+    return ApiResponse(data=row, message="Company created successfully")
+
+
+@companies_router.get("/{company_id}", response_model=ApiResponse[CompanyResponse])
+async def get_company(
+    company_id: UUID,
+    service: CompanyServiceDependency,
+    _: Annotated[CurrentUser, Depends(require_permission(COMPANY_READ))],
+) -> ApiResponse[CompanyResponse]:
+    return ApiResponse(data=await service.get(company_id))
+
+
+@companies_router.patch("/{company_id}", response_model=ApiResponse[CompanyResponse])
+async def update_company(
+    company_id: UUID,
+    payload: CompanyUpdate,
+    current_user: CurrentUserDependency,
+    service: CompanyServiceDependency,
+    _: Annotated[CurrentUser, Depends(require_permission(COMPANY_UPDATE))],
+) -> ApiResponse[CompanyResponse]:
+    row = await service.update(company_id, payload, actor_user_id=current_user.user_id)
+    return ApiResponse(data=row, message="Company updated successfully")
+
+
+@companies_router.delete("/{company_id}", response_model=ApiResponse[CompanyResponse])
+async def delete_company(
+    company_id: UUID,
+    current_user: CurrentUserDependency,
+    service: CompanyServiceDependency,
+    _: Annotated[CurrentUser, Depends(require_permission(COMPANY_DELETE))],
+) -> ApiResponse[CompanyResponse]:
+    row = await service.delete(company_id, actor_user_id=current_user.user_id)
+    return ApiResponse(data=row, message="Company deleted successfully")
+
+
 @warehouses_router.get("", response_model=ApiResponse[list[WarehouseResponse]])
 async def list_warehouses(
     page: PaginationDependency,
@@ -735,4 +799,5 @@ router.include_router(organization_router)
 router.include_router(branches_router)
 router.include_router(departments_router)
 router.include_router(warehouses_router)
+router.include_router(companies_router)
 router.include_router(audit_logs_router)
