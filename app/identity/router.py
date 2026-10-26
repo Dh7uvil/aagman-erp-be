@@ -8,7 +8,7 @@ from fastapi.responses import Response
 
 from app.common.dependencies.auth import CurrentUser, CurrentUserDependency
 from app.common.dependencies.pagination import PaginationDependency
-from app.common.dependencies.permissions import require_permission
+from app.common.dependencies.permissions import ReferenceListAccess, require_permission
 from app.common.schemas.pagination import paginated_response
 from app.common.schemas.response import ApiResponse
 from app.common.utils.files import max_upload_bytes
@@ -24,8 +24,8 @@ from app.identity.catalog import (
     DEPARTMENT_DELETE,
     DEPARTMENT_READ,
     DEPARTMENT_UPDATE,
-    ORGANIZATION_READ,
-    ORGANIZATION_UPDATE,
+    SETTINGS_READ,
+    SETTINGS_UPDATE,
     PERMISSION_READ,
     ROLE_CREATE,
     ROLE_DELETE,
@@ -223,7 +223,7 @@ async def list_users(
     page: PaginationDependency,
     service: AuthServiceDependency,
     filters: Annotated[UserFilter, Depends()],
-    _: Annotated[CurrentUser, Depends(require_permission(USER_READ))],
+    _: ReferenceListAccess,
     role_ids: Annotated[list[UUID] | None, Query()] = None,
 ) -> ApiResponse[list[UserResponse]]:
     user_filter = filters
@@ -322,7 +322,7 @@ async def list_roles(
     page: PaginationDependency,
     service: AuthServiceDependency,
     filters: Annotated[RoleFilter, Depends()],
-    _: Annotated[CurrentUser, Depends(require_permission(ROLE_READ))],
+    _: ReferenceListAccess,
 ) -> ApiResponse[list[RoleResponse]]:
     roles, total = await service.list_roles(page=page, common_filter=filters)
     return paginated_response(roles, params=page, total=total)
@@ -430,7 +430,7 @@ async def list_permissions(
 @organization_router.get("", response_model=ApiResponse[OrganizationResponse])
 async def get_organization(
     service: OrganizationServiceDependency,
-    _: Annotated[CurrentUser, Depends(require_permission(ORGANIZATION_READ))],
+    _: Annotated[CurrentUser, Depends(require_permission(SETTINGS_READ))],
 ) -> ApiResponse[OrganizationResponse]:
     return ApiResponse(data=await service.get_organization())
 
@@ -438,7 +438,7 @@ async def get_organization(
 @organization_router.get("/logo", response_class=Response)
 async def get_organization_logo(
     service: OrganizationServiceDependency,
-    _: Annotated[CurrentUser, Depends(require_permission(ORGANIZATION_READ))],
+    _: Annotated[CurrentUser, Depends(require_permission(SETTINGS_READ))],
 ) -> Response:
     body, content_type = await service.get_logo()
     return Response(content=body, media_type=content_type)
@@ -449,7 +449,7 @@ async def update_organization(
     payload: OrganizationUpdate,
     current_user: CurrentUserDependency,
     service: OrganizationServiceDependency,
-    _: Annotated[CurrentUser, Depends(require_permission(ORGANIZATION_UPDATE))],
+    _: Annotated[CurrentUser, Depends(require_permission(SETTINGS_UPDATE))],
 ) -> ApiResponse[OrganizationResponse]:
     data = await service.update_organization(payload, actor_user_id=current_user.user_id)
     return ApiResponse(data=data, message="Organization updated successfully")
@@ -460,7 +460,7 @@ async def upload_organization_logo(
     current_user: CurrentUserDependency,
     service: OrganizationServiceDependency,
     file: Annotated[UploadFile, File()],
-    _: Annotated[CurrentUser, Depends(require_permission(ORGANIZATION_UPDATE))],
+    _: Annotated[CurrentUser, Depends(require_permission(SETTINGS_UPDATE))],
 ) -> ApiResponse[OrganizationResponse]:
     content = await _read_upload(file, max_bytes=max_upload_bytes(LOGO_MAX_SIZE_MB))
     data = await service.upload_logo(
@@ -475,7 +475,7 @@ async def upload_organization_logo(
 async def delete_organization_logo(
     current_user: CurrentUserDependency,
     service: OrganizationServiceDependency,
-    _: Annotated[CurrentUser, Depends(require_permission(ORGANIZATION_UPDATE))],
+    _: Annotated[CurrentUser, Depends(require_permission(SETTINGS_UPDATE))],
 ) -> ApiResponse[OrganizationResponse]:
     data = await service.delete_logo(actor_user_id=current_user.user_id)
     return ApiResponse(data=data, message="Organization logo deleted successfully")
@@ -486,7 +486,7 @@ async def list_branches(
     page: PaginationDependency,
     service: OrganizationServiceDependency,
     filters: Annotated[BranchFilter, Depends()],
-    _: Annotated[CurrentUser, Depends(require_permission(BRANCH_READ))],
+    _: ReferenceListAccess,
 ) -> ApiResponse[list[BranchResponse]]:
     branches, total = await service.list_branches(
         page=page,
@@ -544,7 +544,7 @@ async def list_departments(
     page: PaginationDependency,
     service: OrganizationServiceDependency,
     filters: Annotated[DepartmentFilter, Depends()],
-    _: Annotated[CurrentUser, Depends(require_permission(DEPARTMENT_READ))],
+    _: ReferenceListAccess,
 ) -> ApiResponse[list[DepartmentResponse]]:
     departments, total = await service.list_departments(
         page=page,
@@ -610,7 +610,7 @@ async def list_companies(
     page: PaginationDependency,
     service: CompanyServiceDependency,
     filters: Annotated[CompanyFilter, Depends()],
-    _: Annotated[CurrentUser, Depends(require_permission(COMPANY_READ))],
+    _: ReferenceListAccess,
 ) -> ApiResponse[list[CompanyResponse]]:
     rows, total = await service.list(page=page, common_filter=filters)
     return paginated_response(rows, params=page, total=total)
@@ -664,7 +664,7 @@ async def list_warehouses(
     page: PaginationDependency,
     service: WarehouseServiceDependency,
     filters: Annotated[WarehouseFilter, Depends()],
-    _: Annotated[CurrentUser, Depends(require_permission(WAREHOUSE_READ))],
+    _: ReferenceListAccess,
 ) -> ApiResponse[list[WarehouseResponse]]:
     rows, total = await service.list(page=page, common_filter=filters)
     return paginated_response(rows, params=page, total=total)

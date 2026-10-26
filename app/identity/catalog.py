@@ -18,8 +18,8 @@ ROLE_READ = build_permission(IDENTITY_MODULE, "role", "read")
 ROLE_UPDATE = build_permission(IDENTITY_MODULE, "role", "update")
 ROLE_DELETE = build_permission(IDENTITY_MODULE, "role", "delete")
 PERMISSION_READ = build_permission(IDENTITY_MODULE, "permission", "read")
-ORGANIZATION_READ = build_permission(IDENTITY_MODULE, "organization", "read")
-ORGANIZATION_UPDATE = build_permission(IDENTITY_MODULE, "organization", "update")
+SETTINGS_READ = build_permission(IDENTITY_MODULE, "settings", "read")
+SETTINGS_UPDATE = build_permission(IDENTITY_MODULE, "settings", "update")
 BRANCH_CREATE = build_permission(IDENTITY_MODULE, "branch", "create")
 BRANCH_READ = build_permission(IDENTITY_MODULE, "branch", "read")
 BRANCH_UPDATE = build_permission(IDENTITY_MODULE, "branch", "update")
@@ -42,7 +42,7 @@ _CATALOG: dict[str, tuple[str, ...]] = {
     "user": ("create", "read", "update", "delete"),
     "role": ("create", "read", "update", "delete"),
     "permission": ("read",),
-    "organization": ("read", "update"),
+    "settings": ("read", "update"),
     "branch": ("create", "read", "update", "delete"),
     "department": ("create", "read", "update", "delete"),
     "warehouse": ("create", "read", "update", "delete"),
@@ -60,18 +60,24 @@ def catalog_permission_strings() -> list[str]:
 
 
 async def seed_permissions(session: AsyncSession) -> None:
+    from app.core.enums import INVENTORY_MODULE
+    from app.inventory.catalog import _CATALOG as INVENTORY_CATALOG
+
     existing = {
         (row.module, row.resource, row.action)
         for row in (await session.execute(select(Permission))).scalars().all()
     }
-    for resource, actions in _CATALOG.items():
-        for action in actions:
-            key = (IDENTITY_MODULE, resource, action)
-            if key in existing:
-                continue
-            session.add(
-                Permission(module=IDENTITY_MODULE, resource=resource, action=action),
-            )
+    catalogs: list[tuple[str, dict[str, tuple[str, ...]]]] = [
+        (IDENTITY_MODULE, _CATALOG),
+        (INVENTORY_MODULE, INVENTORY_CATALOG),
+    ]
+    for module, catalog in catalogs:
+        for resource, actions in catalog.items():
+            for action in actions:
+                key = (module, resource, action)
+                if key in existing:
+                    continue
+                session.add(Permission(module=module, resource=resource, action=action))
     await session.flush()
 
 

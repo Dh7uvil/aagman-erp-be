@@ -193,6 +193,19 @@ async def test_permission_denied_for_users_without_grant(client: AsyncClient) ->
     audit_list = await client.get("/api/v1/audit-logs", headers=viewer_headers)
     assert audit_list.status_code == 200
 
+    reference_lists = [
+        "/api/v1/users",
+        "/api/v1/roles",
+        "/api/v1/branches",
+        "/api/v1/departments",
+        "/api/v1/inventory/units",
+        "/api/v1/inventory/material-categories",
+        "/api/v1/inventory/microns",
+    ]
+    for path in reference_lists:
+        listed = await client.get(path, headers=viewer_headers)
+        assert listed.status_code == 200, f"{path}: {listed.text}"
+
     denied = await client.post(
         "/api/v1/users",
         headers=viewer_headers,

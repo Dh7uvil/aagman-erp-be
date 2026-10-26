@@ -28,6 +28,11 @@ OPENAPI_TAGS: list[dict[str, str]] = [
     {"name": "Warehouses", "description": "Warehouse master data."},
     {"name": "Companies", "description": "Company master data."},
     {"name": "Audit Logs", "description": "Append-only audit trail."},
+    {"name": "Inventory", "description": "Units, materials, and stock movements."},
+    {"name": "Inventory Units", "description": "Units of measure."},
+    {"name": "Material Categories", "description": "Material category master."},
+    {"name": "Materials", "description": "Material subcategories and on-hand balances."},
+    {"name": "Material Movements", "description": "Daily stock in and out."},
 ]
 
 

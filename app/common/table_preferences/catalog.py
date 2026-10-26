@@ -102,6 +102,47 @@ TABLE_CATALOG: dict[str, TableCatalogEntry] = {
                 "status",
             ),
         ),
+        TableCatalogEntry(
+            table_key="inventory.materials",
+            columns=(
+                TableColumnSpec("product"),
+                TableColumnSpec("micron"),
+                TableColumnSpec("size"),
+                TableColumnSpec("rolls"),
+                TableColumnSpec("total_kg"),
+                TableColumnSpec(
+                    "price_per_unit",
+                    default_visible=False,
+                    required_permission="inventory.material.view_price",
+                ),
+                TableColumnSpec("active", default_visible=False),
+            ),
+        ),
+        _entry(
+            "inventory.units",
+            ("code", "name", "active"),
+            *_hidden("created_at", "updated_at"),
+        ),
+        TableCatalogEntry(
+            table_key="inventory.materials_report",
+            pinned_count=0,
+            columns=(
+                TableColumnSpec("product"),
+                TableColumnSpec("micron"),
+                TableColumnSpec("size"),
+                TableColumnSpec("in_rolls"),
+                TableColumnSpec("in_kg"),
+                TableColumnSpec("out_rolls"),
+                TableColumnSpec("out_kg"),
+                TableColumnSpec("closing_rolls"),
+                TableColumnSpec("closing_kg"),
+                TableColumnSpec(
+                    "price_per_unit",
+                    default_visible=True,
+                    required_permission="inventory.material.view_price",
+                ),
+            ),
+        ),
     )
 }
 
