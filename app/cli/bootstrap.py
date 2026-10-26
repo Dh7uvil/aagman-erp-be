@@ -18,6 +18,7 @@ from app.core.security import PasswordTooLongError, hash_password
 from app.db.session import async_session_factory, transaction
 from app.identity.catalog import grant_all_permissions_to_role, seed_permissions
 from app.identity.models import Organization, Role, User, UserRole
+from app.inventory.seed_units import seed_default_inventory_units
 
 
 @dataclass(frozen=True, slots=True)
@@ -91,6 +92,8 @@ async def provision_organization(
 
         session.add(UserRole(user_id=user.id, role_id=role.id))
         await session.flush()
+
+        await seed_default_inventory_units(session)
 
         return BootstrapResult(
             organization_id=org.id,

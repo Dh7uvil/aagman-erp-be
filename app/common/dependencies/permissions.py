@@ -5,7 +5,7 @@ from typing import Annotated
 
 from fastapi import Depends
 
-from app.common.dependencies.auth import CurrentUser, get_current_user
+from app.common.dependencies.auth import CurrentUser, CurrentUserDependency, get_current_user
 from app.core.exceptions import PermissionDeniedError
 from app.core.permissions import has_permission, parse_permission
 
@@ -43,3 +43,7 @@ def require_any_permission(*required_permissions: str) -> PermissionDependency:
         return current_user
 
     return dependency
+
+
+# Master list endpoints used in dropdowns across forms (no module read permission required).
+ReferenceListAccess = CurrentUserDependency

@@ -18,20 +18,7 @@ _ILIKE_ESCAPE = "\\"
 
 @dataclass(frozen=True, slots=True)
 class RelatedSearch:
-    """Match list rows when a related entity's text fields contain the search term.
-
-    Direct FK (parent.customer_id → Customer.id):
-        RelatedSearch(Customer, local_key="customer_id", fields={"name", "code"})
-
-    Child table (parent.id ← Line.sales_order_id), optionally into a product:
-        RelatedSearch(
-            Line,
-            local_key="id",
-            remote_key="sales_order_id",
-            fields={"description"},
-            nested=(RelatedSearch(Product, local_key="product_id", fields={"sku", "name"}),),
-        )
-    """
+    """Match list rows when a related entity's text fields contain the search term."""
 
     model: type[Base]
     local_key: str
@@ -145,13 +132,6 @@ def search_clause(
     return or_(*clauses)
 
 
-PARTY_FIELDS = frozenset({"name", "code", "trn", "notes"})
-PRODUCT_FIELDS = frozenset({"sku", "name", "sales_description", "purchase_description", "hs_code"})
-PRODUCT_INVENTORY_SEARCH_FIELDS = PRODUCT_FIELDS | frozenset(
-    {"alias_2", "alias_3", "alias_4", "engine", "brand"}
-)
-CONTACT_FIELDS = frozenset({"name", "email", "phone"})
-WAREHOUSE_FIELDS = frozenset({"code", "name", "phone"})
 ADDRESS_FIELDS = frozenset(
     {
         "address_line_1",
@@ -164,85 +144,12 @@ ADDRESS_FIELDS = frozenset(
     }
 )
 USER_FIELDS = frozenset({"name", "email", "phone"})
-CURRENCY_FIELDS = frozenset({"code", "name", "symbol"})
-DOCUMENT_NUMBER_FIELDS = frozenset({"document_number"})
-
-
-def party_search(local_key: str = "customer_id") -> RelatedSearch:
-    from app.crm.customers.models import Customer
-
-    return RelatedSearch(Customer, local_key=local_key, fields=PARTY_FIELDS)
-
-
-def contact_search(local_key: str = "contact_id") -> RelatedSearch:
-    from app.crm.contacts.models import Contact
-
-    return RelatedSearch(Contact, local_key=local_key, fields=CONTACT_FIELDS)
-
-
-def party_contacts_search() -> RelatedSearch:
-    from app.crm.contacts.models import Contact
-
-    return RelatedSearch(
-        Contact,
-        local_key="id",
-        remote_key="customer_id",
-        fields=CONTACT_FIELDS,
-    )
-
-
-def extra_address_search() -> RelatedSearch:
-    from app.crm.customers.models import CustomerAddress
-
-    return RelatedSearch(
-        CustomerAddress,
-        local_key="id",
-        remote_key="customer_id",
-        fields=frozenset({"label"}),
-        nested=(address_search("address_id"),),
-    )
 
 
 def address_search(local_key: str) -> RelatedSearch:
     from app.identity.models import Address
 
     return RelatedSearch(Address, local_key=local_key, fields=ADDRESS_FIELDS)
-
-
-def product_search(local_key: str = "product_id") -> RelatedSearch:
-    from app.inventory_management.products.models import Product
-
-    return RelatedSearch(Product, local_key=local_key, fields=PRODUCT_FIELDS)
-
-
-def warehouse_search(local_key: str) -> RelatedSearch:
-    from app.inventory_management.warehouses.models import Warehouse
-
-    return RelatedSearch(Warehouse, local_key=local_key, fields=WAREHOUSE_FIELDS)
-
-
-def category_search(local_key: str = "category_id") -> RelatedSearch:
-    from app.inventory_management.categories.models import Category
-
-    return RelatedSearch(Category, local_key=local_key, fields=frozenset({"code", "name"}))
-
-
-def unit_search(local_key: str = "unit_id") -> RelatedSearch:
-    from app.inventory_management.units.models import Unit
-
-    return RelatedSearch(Unit, local_key=local_key, fields=frozenset({"code", "name"}))
-
-
-def currency_search(local_key: str = "currency_id") -> RelatedSearch:
-    from app.erp.exchange_rates.models import Currency
-
-    return RelatedSearch(Currency, local_key=local_key, fields=CURRENCY_FIELDS)
-
-
-def account_search(local_key: str = "account_id") -> RelatedSearch:
-    from app.erp.accounting.accounts.models import Account
-
-    return RelatedSearch(Account, local_key=local_key, fields=frozenset({"code", "name"}))
 
 
 def branch_search(local_key: str = "branch_id") -> RelatedSearch:
@@ -255,166 +162,3 @@ def user_search(local_key: str) -> RelatedSearch:
     from app.identity.models import User
 
     return RelatedSearch(User, local_key=local_key, fields=USER_FIELDS)
-
-
-def employee_search(local_key: str = "salesperson_id") -> RelatedSearch:
-    from app.auth.models import Employee
-
-    return RelatedSearch(
-        Employee,
-        local_key=local_key,
-        fields=frozenset({"employee_code", "designation"}),
-        nested=(user_search("user_id"),),
-    )
-
-
-def quotation_search(local_key: str = "source_quotation_id") -> RelatedSearch:
-    from app.erp.quotation.models import Quotation
-
-    return RelatedSearch(Quotation, local_key=local_key, fields=frozenset({"quote_number"}))
-
-
-def sales_order_search(local_key: str = "sales_order_id") -> RelatedSearch:
-    from app.erp.sales_orders.models import SalesOrder
-
-    return RelatedSearch(
-        SalesOrder,
-        local_key=local_key,
-        fields=frozenset({"document_number", "reference_number", "customer_po_number"}),
-    )
-
-
-def sales_invoice_search(local_key: str = "sales_invoice_id") -> RelatedSearch:
-    from app.erp.sales_invoices.models import SalesInvoice
-
-    return RelatedSearch(SalesInvoice, local_key=local_key, fields=DOCUMENT_NUMBER_FIELDS)
-
-
-def proforma_search(local_key: str = "source_proforma_invoice_id") -> RelatedSearch:
-    from app.erp.proforma_invoices.models import ProformaInvoice
-
-    return RelatedSearch(ProformaInvoice, local_key=local_key, fields=DOCUMENT_NUMBER_FIELDS)
-
-
-def purchase_order_search(local_key: str = "purchase_order_id") -> RelatedSearch:
-    from app.erp.purchase_orders.models import PurchaseOrder
-
-    return RelatedSearch(
-        PurchaseOrder,
-        local_key=local_key,
-        fields=frozenset({"document_number", "reference_number"}),
-    )
-
-
-def purchase_invoice_search(local_key: str = "purchase_invoice_id") -> RelatedSearch:
-    from app.erp.purchase_invoices.models import PurchaseInvoice
-
-    return RelatedSearch(
-        PurchaseInvoice,
-        local_key=local_key,
-        fields=frozenset({"document_number", "supplier_invoice_number"}),
-    )
-
-
-def goods_receipt_search(local_key: str = "goods_receipt_id") -> RelatedSearch:
-    from app.inventory_management.goods_receipts.models import GoodsReceipt
-
-    return RelatedSearch(
-        GoodsReceipt,
-        local_key=local_key,
-        fields=frozenset(
-            {
-                "document_number",
-                "supplier_invoice_number",
-                "delivery_challan_number",
-                "bill_of_entry_number",
-            }
-        ),
-    )
-
-
-def delivery_note_search(local_key: str = "delivery_note_id") -> RelatedSearch:
-    from app.inventory_management.delivery_notes.models import DeliveryNote
-
-    return RelatedSearch(DeliveryNote, local_key=local_key, fields=DOCUMENT_NUMBER_FIELDS)
-
-
-def sales_return_search(local_key: str = "sales_return_id") -> RelatedSearch:
-    from app.inventory_management.sales_returns.models import SalesReturn
-
-    return RelatedSearch(SalesReturn, local_key=local_key, fields=DOCUMENT_NUMBER_FIELDS)
-
-
-def purchase_return_search(local_key: str = "purchase_return_id") -> RelatedSearch:
-    from app.inventory_management.purchase_returns.models import PurchaseReturn
-
-    return RelatedSearch(PurchaseReturn, local_key=local_key, fields=DOCUMENT_NUMBER_FIELDS)
-
-
-def shipment_search(local_key: str = "shipment_id") -> RelatedSearch:
-    from app.logistics.shipments.models import Shipment
-
-    return RelatedSearch(
-        Shipment,
-        local_key=local_key,
-        fields=frozenset({"document_number", "container_number", "bl_awb_number"}),
-    )
-
-
-def line_search(
-    line_model: type[Base],
-    parent_fk: str,
-    *,
-    fields: frozenset[str] = frozenset(),
-    product_key: str | None = "product_id",
-    nested: tuple[RelatedSearch, ...] = (),
-) -> RelatedSearch:
-    extra = list(nested)
-    if product_key is not None:
-        extra.append(product_search(product_key))
-    return RelatedSearch(
-        line_model,
-        local_key="id",
-        remote_key=parent_fk,
-        fields=fields,
-        nested=tuple(extra),
-    )
-
-
-def customer_payment_allocation_search() -> RelatedSearch:
-    from app.core.enums import PaymentAllocationSource
-    from app.erp.accounting.open_items.models import PaymentAllocation
-    from app.erp.credit_notes.models import CreditNote
-    from app.erp.proforma_invoices.models import ProformaInvoice
-
-    return RelatedSearch(
-        PaymentAllocation,
-        local_key="id",
-        remote_key="payment_id",
-        equals=(("payment_type", PaymentAllocationSource.CUSTOMER_PAYMENT.value),),
-        null_keys=("reversed_at",),
-        nested=(
-            sales_invoice_search("item_id"),
-            RelatedSearch(CreditNote, local_key="item_id", fields=DOCUMENT_NUMBER_FIELDS),
-            RelatedSearch(ProformaInvoice, local_key="item_id", fields=DOCUMENT_NUMBER_FIELDS),
-        ),
-    )
-
-
-def supplier_payment_allocation_search() -> RelatedSearch:
-    from app.core.enums import PaymentAllocationSource
-    from app.erp.accounting.open_items.models import PaymentAllocation
-    from app.erp.debit_notes.models import DebitNote
-    from app.erp.purchase_invoices.models import PurchaseInvoice
-
-    return RelatedSearch(
-        PaymentAllocation,
-        local_key="id",
-        remote_key="payment_id",
-        equals=(("payment_type", PaymentAllocationSource.SUPPLIER_PAYMENT.value),),
-        null_keys=("reversed_at",),
-        nested=(
-            RelatedSearch(PurchaseInvoice, local_key="item_id", fields=DOCUMENT_NUMBER_FIELDS),
-            RelatedSearch(DebitNote, local_key="item_id", fields=DOCUMENT_NUMBER_FIELDS),
-        ),
-    )

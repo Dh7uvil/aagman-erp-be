@@ -24,3 +24,4 @@ class SoftDeleteModel(SoftDeleteMixin, TimestampedModel):
 import app.common.models.audit_log as _audit_log  # noqa: E402, F401
 import app.common.table_preferences.models as _table_preferences  # noqa: E402, F401
 import app.identity.models as _identity_models  # noqa: E402, F401
+import app.inventory.models as _inventory_models  # noqa: E402, F401

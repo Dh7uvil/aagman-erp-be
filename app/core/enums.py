@@ -49,3 +49,16 @@ class AuditStatus(StrEnum):
 
 SYSTEM_ADMIN_ROLE_NAME = "Superadmin"
 IDENTITY_MODULE = "identity"
+INVENTORY_MODULE = "inventory"
+
+
+class MaterialMovementDirection(StrEnum):
+    IN = "IN"
+    OUT = "OUT"
+    OPENING = "OPENING"
+
+
+class MaterialCategoryKind(StrEnum):
+    PRODUCT = "product"
+    MICRON = "micron"
+    SKU = "sku"

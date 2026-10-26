@@ -57,7 +57,9 @@ async def _reset_identity_tables() -> None:
             text(
                 "TRUNCATE TABLE user_table_preferences, user_roles, role_permissions, "
                 "refresh_tokens, password_reset_tokens, audit_logs, users, departments, "
-                "warehouses, branches, roles, permissions, organizations, addresses "
+                "warehouses, branches, roles, permissions, organizations, addresses, "
+                "material_movements, material_categories, inventory_units, "
+                "companies "
                 "RESTART IDENTITY CASCADE"
             )
         )
