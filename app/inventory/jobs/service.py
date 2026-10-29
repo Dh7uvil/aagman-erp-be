@@ -304,6 +304,7 @@ class JobService:
                 await self.session.flush()
             except IntegrityError as exc:
                 raise ValidationError("Job is already paused") from exc
+            await self.session.refresh(row, attribute_names=["updated_at"])
             await self.audit.write(
                 user_id=actor_user_id,
                 action=AuditAction.UPDATE,
@@ -338,6 +339,7 @@ class JobService:
             row.status = JobStatus.RESUMED.value
             row.updated_by = actor_user_id
             await self.session.flush()
+            await self.session.refresh(row, attribute_names=["updated_at"])
             await self.audit.write(
                 user_id=actor_user_id,
                 action=AuditAction.UPDATE,

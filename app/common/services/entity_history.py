@@ -14,6 +14,8 @@ from app.identity.audit_repository import AuditLogRepository
 from app.identity.models import User
 from app.identity.schemas import AuditLogUserSummary
 
+_LIFECYCLE_EVENTS = frozenset({"pause", "resume"})
+
 
 class EntityHistoryEntry(BaseModel):
     model_config = ConfigDict(from_attributes=True)
@@ -26,6 +28,7 @@ class EntityHistoryEntry(BaseModel):
     entity_id: UUID | None
     module: str
     kind: str = "edit"
+    event: str | None = None
     summary: str | None = None
     attachment_slot: str | None = None
     storage_key: str | None = None
@@ -62,7 +65,11 @@ class EntityHistoryService:
             event_kind = new_values.get("event_kind") or old_values.get("event_kind")
             filename = new_values.get("original_filename") or old_values.get("original_filename")
             kind = "attachment" if event_kind == "attachment" or filename else "edit"
+            event = str(event_kind) if event_kind in _LIFECYCLE_EVENTS else None
             summary = str(filename) if kind == "attachment" and filename else None
+            if event is not None:
+                remarks = new_values.get("pause_remarks") or old_values.get("pause_remarks")
+                summary = str(remarks).strip() or None if remarks else None
             attachment_slot = (
                 str(new_values.get("slot") or old_values.get("slot") or "")
                 if kind == "attachment"
@@ -71,7 +78,11 @@ class EntityHistoryService:
             storage_key_raw = new_values.get("storage_key") or old_values.get("storage_key")
             storage_key = str(storage_key_raw).strip() if storage_key_raw else None
             attachment_deleted = bool(new_values.get("deleted")) if kind == "attachment" else False
-            changes = audit_field_changes(old_values, new_values) if kind == "edit" else []
+            changes = (
+                audit_field_changes(old_values, new_values)
+                if kind == "edit" and event is None
+                else []
+            )
             user = None
             if row.user_id and row.user_id in users_by_id:
                 user = AuditLogUserSummary(id=row.user_id, name=users_by_id[row.user_id].name)
@@ -85,6 +96,7 @@ class EntityHistoryService:
                     entity_id=row.entity_id,
                     module=row.module,
                     kind=kind,
+                    event=event,
                     summary=summary,
                     attachment_slot=attachment_slot,
                     storage_key=storage_key,

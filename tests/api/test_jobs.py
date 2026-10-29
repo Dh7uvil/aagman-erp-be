@@ -85,6 +85,16 @@ async def test_jobs_crud_pause_return_and_files(client: AsyncClient) -> None:
     default_list_after_resume = await client.get("/api/v1/inventory/jobs", headers=headers)
     assert any(row["id"] == job_id for row in default_list_after_resume.json()["data"])
 
+    history = await client.get(f"/api/v1/inventory/jobs/{job_id}/history", headers=headers)
+    assert history.status_code == 200, history.text
+    lifecycle = {
+        row["event"]: row for row in history.json()["data"] if row["event"] in {"pause", "resume"}
+    }
+    assert set(lifecycle) == {"pause", "resume"}
+    assert all(row["kind"] == "edit" and row["changes"] == [] for row in lifecycle.values())
+    assert lifecycle["pause"]["summary"] == "Waiting material"
+    assert lifecycle["resume"]["summary"] is None
+
     pdf_bytes = b"%PDF-1.4 test"
     upload = await client.post(
         f"/api/v1/inventory/jobs/{job_id}/files/job_image",
