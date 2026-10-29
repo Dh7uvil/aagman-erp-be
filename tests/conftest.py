@@ -59,6 +59,7 @@ async def _reset_identity_tables() -> None:
                 "refresh_tokens, password_reset_tokens, audit_logs, users, departments, "
                 "warehouses, branches, roles, permissions, organizations, addresses, "
                 "material_movements, material_categories, inventory_units, "
+                "job_colors, job_cylinders, job_pauses, cylinder_returns, jobs, "
                 "companies "
                 "RESTART IDENTITY CASCADE"
             )

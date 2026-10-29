@@ -143,6 +143,30 @@ TABLE_CATALOG: dict[str, TableCatalogEntry] = {
                 ),
             ),
         ),
+        TableCatalogEntry(
+            table_key="inventory.jobs",
+            columns=(
+                TableColumnSpec("job_number"),
+                TableColumnSpec("company"),
+                TableColumnSpec("product"),
+                TableColumnSpec("status"),
+                TableColumnSpec("cylinder_count"),
+                TableColumnSpec("pet_size", default_visible=False),
+                TableColumnSpec("cylinder_location", default_visible=False),
+                TableColumnSpec(
+                    "cylinder_cost",
+                    default_visible=False,
+                    required_permission="inventory.job.view_price",
+                ),
+                TableColumnSpec("created_at", default_visible=False),
+                TableColumnSpec("updated_at", default_visible=False),
+            ),
+        ),
+        _entry(
+            "inventory.cylinder_returns",
+            ("return_number", "customer", "job", "remarks"),
+            *_hidden("created_at", "updated_at"),
+        ),
     )
 }
 

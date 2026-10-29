@@ -62,3 +62,11 @@ class MaterialCategoryKind(StrEnum):
     PRODUCT = "product"
     MICRON = "micron"
     SKU = "sku"
+
+
+class JobStatus(StrEnum):
+    ACTIVE = "ACTIVE"
+    PAUSED = "PAUSED"
+    RESUMED = "RESUMED"
+    COMPLETED = "COMPLETED"
+    RETURNED = "RETURNED"
