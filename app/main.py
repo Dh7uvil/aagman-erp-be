@@ -9,6 +9,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.core.config import get_settings
+from app.core.startup_permissions import sync_permissions_on_startup
 from app.core.error_handlers import register_error_handlers
 from app.core.logging import configure_logging
 from app.core.middleware import RequestContextMiddleware
@@ -38,6 +39,8 @@ OPENAPI_TAGS: list[dict[str, str]] = [
 
 @asynccontextmanager
 async def lifespan(_application: FastAPI) -> AsyncIterator[None]:
+    settings = get_settings()
+    await sync_permissions_on_startup(settings)
     yield
     await engine.dispose()
 

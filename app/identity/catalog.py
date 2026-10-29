@@ -60,18 +60,13 @@ def catalog_permission_strings() -> list[str]:
 
 
 async def seed_permissions(session: AsyncSession) -> None:
-    from app.core.enums import INVENTORY_MODULE
-    from app.inventory.catalog import _CATALOG as INVENTORY_CATALOG
+    from app.core.permission_catalog import permission_catalog
 
     existing = {
         (row.module, row.resource, row.action)
         for row in (await session.execute(select(Permission))).scalars().all()
     }
-    catalogs: list[tuple[str, dict[str, tuple[str, ...]]]] = [
-        (IDENTITY_MODULE, _CATALOG),
-        (INVENTORY_MODULE, INVENTORY_CATALOG),
-    ]
-    for module, catalog in catalogs:
+    for module, catalog in permission_catalog().items():
         for resource, actions in catalog.items():
             for action in actions:
                 key = (module, resource, action)

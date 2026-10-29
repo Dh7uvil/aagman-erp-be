@@ -26,6 +26,7 @@ dependencies = [
 bootstrap = "app.cli.bootstrap:main"
 seed-permissions = "app.cli.seed_permissions:main"
 generate-jwt-secret = "app.cli.generate_jwt_secret:main"
+export-permissions-catalog = "app.cli.export_permissions_catalog:main"
 
 [build-system]
 requires = ["hatchling"]

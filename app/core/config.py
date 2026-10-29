@@ -27,6 +27,7 @@ class Settings(BaseSettings):
     app_name: str = "Aagman ERP API"
     app_version: str = "0.1.0"
     debug: bool = False
+    auto_sync_permissions: bool = True
     log_level: Literal["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"] = "INFO"
     api_v1_prefix: str = "/api/v1"
 

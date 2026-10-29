@@ -1,0 +1,154 @@
+{
+  "permissions": [
+    "identity.audit_log.read",
+    "identity.branch.create",
+    "identity.branch.delete",
+    "identity.branch.read",
+    "identity.branch.update",
+    "identity.company.create",
+    "identity.company.delete",
+    "identity.company.read",
+    "identity.company.update",
+    "identity.department.create",
+    "identity.department.delete",
+    "identity.department.read",
+    "identity.department.update",
+    "identity.permission.read",
+    "identity.role.create",
+    "identity.role.delete",
+    "identity.role.read",
+    "identity.role.update",
+    "identity.settings.read",
+    "identity.settings.update",
+    "identity.user.create",
+    "identity.user.delete",
+    "identity.user.read",
+    "identity.user.update",
+    "identity.warehouse.create",
+    "identity.warehouse.delete",
+    "identity.warehouse.read",
+    "identity.warehouse.update",
+    "inventory.cylinder_return.create",
+    "inventory.cylinder_return.delete",
+    "inventory.cylinder_return.read",
+    "inventory.cylinder_return.update",
+    "inventory.job.create",
+    "inventory.job.delete",
+    "inventory.job.history",
+    "inventory.job.read",
+    "inventory.job.update",
+    "inventory.job.view_price",
+    "inventory.job_challan.create",
+    "inventory.job_challan.delete",
+    "inventory.job_challan.read",
+    "inventory.job_challan.update",
+    "inventory.job_image.create",
+    "inventory.job_image.delete",
+    "inventory.job_image.read",
+    "inventory.job_image.update",
+    "inventory.material.create",
+    "inventory.material.delete",
+    "inventory.material.read",
+    "inventory.material.update",
+    "inventory.material.view_price",
+    "inventory.materials_report.read",
+    "inventory.unit.create",
+    "inventory.unit.delete",
+    "inventory.unit.read",
+    "inventory.unit.update"
+  ],
+  "modules": {
+    "identity": {
+      "user": [
+        "create",
+        "read",
+        "update",
+        "delete"
+      ],
+      "role": [
+        "create",
+        "read",
+        "update",
+        "delete"
+      ],
+      "permission": [
+        "read"
+      ],
+      "settings": [
+        "read",
+        "update"
+      ],
+      "branch": [
+        "create",
+        "read",
+        "update",
+        "delete"
+      ],
+      "department": [
+        "create",
+        "read",
+        "update",
+        "delete"
+      ],
+      "warehouse": [
+        "create",
+        "read",
+        "update",
+        "delete"
+      ],
+      "company": [
+        "create",
+        "read",
+        "update",
+        "delete"
+      ],
+      "audit_log": [
+        "read"
+      ]
+    },
+    "inventory": {
+      "unit": [
+        "create",
+        "read",
+        "update",
+        "delete"
+      ],
+      "material": [
+        "create",
+        "read",
+        "update",
+        "delete",
+        "view_price"
+      ],
+      "materials_report": [
+        "read"
+      ],
+      "job": [
+        "create",
+        "read",
+        "update",
+        "delete",
+        "view_price",
+        "history"
+      ],
+      "job_image": [
+        "create",
+        "read",
+        "update",
+        "delete"
+      ],
+      "job_challan": [
+        "create",
+        "read",
+        "update",
+        "delete"
+      ],
+      "cylinder_return": [
+        "create",
+        "read",
+        "update",
+        "delete"
+      ]
+    }
+  }
+}
