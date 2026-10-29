@@ -66,6 +66,7 @@ from app.inventory.jobs.schemas import (
     JobPauseRequest,
     JobPauseResponse,
     JobResponse,
+    JobResumeRequest,
     JobUpdate,
 )
 
@@ -318,6 +319,7 @@ class JobService:
     async def resume_job(
         self,
         job_id: UUID,
+        payload: JobResumeRequest,
         *,
         actor_user_id: UUID,
         permissions: frozenset[str],
@@ -336,6 +338,7 @@ class JobService:
             now = utcnow()
             pause_row.resumed_at = now
             pause_row.resumed_by = actor_user_id
+            pause_row.resume_remarks = payload.resume_remarks
             row.status = JobStatus.RESUMED.value
             row.updated_by = actor_user_id
             await self.session.flush()
@@ -346,7 +349,7 @@ class JobService:
                 module=INVENTORY_MODULE,
                 entity_type="job",
                 entity_id=row.id,
-                new_values={"event_kind": "resume"},
+                new_values={"event_kind": "resume", "resume_remarks": payload.resume_remarks},
             )
             return await self._to_response(row, permissions=permissions, include_children=True)
 
@@ -619,6 +622,7 @@ class JobService:
                     resumed_at=p.resumed_at,
                     resumed_by=p.resumed_by,
                     resumed_by_name=user_names.get(p.resumed_by) if p.resumed_by else None,
+                    resume_remarks=p.resume_remarks,
                 )
                 for p in pauses
             ],

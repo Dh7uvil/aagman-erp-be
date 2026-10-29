@@ -1,4 +1,4 @@
-"""Jobs, pauses, and cylinder returns."""
+"""Jobs, job pauses (pause and resume remarks), and cylinder returns."""
 
 from alembic import op
 from sqlalchemy.engine import Connection

@@ -55,6 +55,7 @@ class JobPauseResponse(BaseModel):
     resumed_at: datetime | None
     resumed_by: UUID | None
     resumed_by_name: str | None = None
+    resume_remarks: str | None
 
 
 class JobCreate(BaseModel):
@@ -163,6 +164,10 @@ class JobResponse(BaseModel):
 
 class JobPauseRequest(BaseModel):
     pause_remarks: str | None = None
+
+
+class JobResumeRequest(BaseModel):
+    resume_remarks: str | None = None
 
 
 class CylinderReturnCreate(BaseModel):

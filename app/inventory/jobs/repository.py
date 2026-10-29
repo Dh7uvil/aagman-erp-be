@@ -145,6 +145,7 @@ async def replace_cylinders(
     existing = await session.execute(select(JobCylinder).where(JobCylinder.job_id == job_id))
     for row in existing.scalars().all():
         await session.delete(row)
+    await session.flush()
     for index, item in enumerate(cylinders, start=1):
         session.add(
             JobCylinder(
@@ -164,5 +165,6 @@ async def replace_colors(
     existing = await session.execute(select(JobColor).where(JobColor.job_id == job_id))
     for row in existing.scalars().all():
         await session.delete(row)
+    await session.flush()
     for index, item in enumerate(colors, start=1):
         session.add(JobColor(job_id=job_id, position=index, name=item["name"]))

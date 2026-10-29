@@ -130,6 +130,7 @@ class JobPause(TimestampedModel):
         ForeignKey("users.id", ondelete="SET NULL"),
         nullable=True,
     )
+    resume_remarks: Mapped[str | None] = mapped_column(Text, nullable=True)
 
 
 class CylinderReturn(AuditUserMixin, SoftDeleteModel):

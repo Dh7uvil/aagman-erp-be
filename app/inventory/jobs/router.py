@@ -38,6 +38,7 @@ from app.inventory.jobs.schemas import (
     JobListItem,
     JobPauseRequest,
     JobResponse,
+    JobResumeRequest,
     JobUpdate,
 )
 
@@ -156,12 +157,14 @@ async def pause_job(
 @jobs_router.post("/{job_id}/resume", response_model=ApiResponse[JobResponse])
 async def resume_job(
     job_id: UUID,
+    payload: JobResumeRequest,
     current_user: CurrentUserDependency,
     service: JobServiceDependency,
     _: Annotated[CurrentUser, Depends(require_permission(JOB_UPDATE))],
 ) -> ApiResponse[JobResponse]:
     row = await service.resume_job(
         job_id,
+        payload,
         actor_user_id=current_user.user_id,
         permissions=current_user.permissions,
     )

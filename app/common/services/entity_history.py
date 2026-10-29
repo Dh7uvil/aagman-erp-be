@@ -68,7 +68,8 @@ class EntityHistoryService:
             event = str(event_kind) if event_kind in _LIFECYCLE_EVENTS else None
             summary = str(filename) if kind == "attachment" and filename else None
             if event is not None:
-                remarks = new_values.get("pause_remarks") or old_values.get("pause_remarks")
+                remarks_key = "resume_remarks" if event == "resume" else "pause_remarks"
+                remarks = new_values.get(remarks_key) or old_values.get(remarks_key)
                 summary = str(remarks).strip() or None if remarks else None
             attachment_slot = (
                 str(new_values.get("slot") or old_values.get("slot") or "")
