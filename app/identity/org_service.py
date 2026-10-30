@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from uuid import UUID
+from urllib.parse import quote
+from uuid import UUID, uuid4
 
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -11,6 +12,7 @@ from app.common.schemas.filters import BaseFilter
 from app.common.schemas.pagination import PageParams
 from app.common.services.audit import AuditWriter
 from app.common.utils.files import MIME_JPEG, MIME_PNG, MIME_WEBP, validate_upload
+from app.common.utils.time import utcnow
 from app.core.config import get_settings
 from app.core.enums import AddressType, AuditAction, BranchStatus, IDENTITY_MODULE
 from app.core.exceptions import DuplicateResourceError, ResourceNotFoundError, ValidationError
@@ -56,11 +58,20 @@ def _address_response(address: Address | None) -> AddressResponse | None:
     return AddressResponse.model_validate(address)
 
 
+def _unique_logo_filename(filename: str) -> str:
+    """Keep replacements from colliding on the same object key."""
+
+    ext = filename.rsplit(".", 1)[-1] if "." in filename else ""
+    return f"{uuid4().hex}.{ext}" if ext else uuid4().hex
+
+
 def _logo_url(logo_storage_key: str | None) -> str | None:
     if not logo_storage_key:
         return None
     settings = get_settings()
-    return f"{settings.api_v1_prefix}/organization/logo"
+    path = f"{settings.api_v1_prefix}/organization/logo"
+    version = quote(logo_storage_key.rsplit("/", 1)[-1], safe=".-_")
+    return f"{path}?v={version}"
 
 
 class OrganizationService:
@@ -155,16 +166,18 @@ class OrganizationService:
         )
         async with transaction(self.session):
             org = await self._require_organization(for_update=True)
+            stored_name = _unique_logo_filename(validated.filename)
             if self.storage is not None:
                 new_key = build_org_logo_key(
                     organization_id=org.id,
-                    filename=validated.filename,
+                    filename=stored_name,
                 )
             else:
-                new_key = local_storage.logo_relative_key(validated.filename)
+                new_key = local_storage.logo_relative_key(stored_name)
             old_key = org.logo_storage_key
             old_values = self._organization_snapshot(org)
             org.logo_storage_key = new_key
+            org.updated_at = utcnow()
             await self.session.flush()
             await self.session.refresh(org)
             if self.storage is not None:
@@ -199,6 +212,7 @@ class OrganizationService:
                 raise ResourceNotFoundError("Organization logo not found")
             old_values = self._organization_snapshot(org)
             org.logo_storage_key = None
+            org.updated_at = utcnow()
             await self.session.flush()
             await self.session.refresh(org)
             if self.storage is not None:

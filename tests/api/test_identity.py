@@ -83,6 +83,13 @@ async def test_organization_branding_is_public(client: AsyncClient) -> None:
     assert data["name"]
 
 
+_TINY_PNG = (
+    b"\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\x00\x00\x00\x01\x00\x00\x00\x01"
+    b"\x08\x06\x00\x00\x00\x1f\x15\xc4\x89\x00\x00\x00\nIDATx\x9cc\x00\x01"
+    b"\x00\x00\x05\x00\x01\r\n-\xb4\x00\x00\x00\x00IEND\xaeB`\x82"
+)
+
+
 async def test_organization_logo_is_public(client: AsyncClient) -> None:
     branding = await client.get("/api/v1/organization/branding")
     assert branding.status_code == 200, branding.text
@@ -92,6 +99,35 @@ async def test_organization_logo_is_public(client: AsyncClient) -> None:
     response = await client.get(logo_url)
     assert response.status_code == 200, response.text
     assert response.headers.get("content-type", "").startswith("image/")
+    assert "no-cache" in (response.headers.get("cache-control") or "").lower()
+
+
+async def test_organization_logo_upload_changes_url(client: AsyncClient) -> None:
+    email, password = await provision_admin()
+    headers = await login_headers(client, email, password)
+
+    first = await client.post(
+        "/api/v1/organization/logo",
+        headers=headers,
+        files={"file": ("logo.png", _TINY_PNG, "image/png")},
+    )
+    assert first.status_code == 200, first.text
+    first_url = first.json()["data"]["logo_url"]
+    assert first_url
+    assert "v=" in first_url
+
+    fetched = await client.get(first_url)
+    assert fetched.status_code == 200, fetched.text
+    assert fetched.headers.get("content-type", "").startswith("image/")
+
+    second = await client.post(
+        "/api/v1/organization/logo",
+        headers=headers,
+        files={"file": ("logo.png", _TINY_PNG, "image/png")},
+    )
+    assert second.status_code == 200, second.text
+    second_url = second.json()["data"]["logo_url"]
+    assert second_url != first_url
 
 
 async def test_organization_singleton_update(client: AsyncClient) -> None:

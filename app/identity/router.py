@@ -448,7 +448,11 @@ async def get_organization_logo(
     service: OrganizationServiceDependency,
 ) -> Response:
     body, content_type = await service.get_logo()
-    return Response(content=body, media_type=content_type)
+    return Response(
+        content=body,
+        media_type=content_type,
+        headers={"Cache-Control": "private, no-cache, must-revalidate"},
+    )
 
 
 @organization_router.patch("", response_model=ApiResponse[OrganizationResponse])
