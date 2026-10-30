@@ -551,6 +551,13 @@ class OrganizationSettings(BaseModel):
         return normalized
 
 
+class OrganizationBrandingResponse(BaseModel):
+    """Public org name and logo for unauthenticated surfaces (e.g. login)."""
+
+    name: str
+    logo_url: str | None = None
+
+
 class OrganizationResponse(BaseModel):
     id: UUID
     name: str

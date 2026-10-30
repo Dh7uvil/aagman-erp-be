@@ -30,6 +30,7 @@ from app.identity.schemas import (
     DepartmentCreate,
     DepartmentResponse,
     DepartmentUpdate,
+    OrganizationBrandingResponse,
     OrganizationResponse,
     OrganizationSettings,
     OrganizationUpdate,
@@ -75,6 +76,13 @@ class OrganizationService:
     async def get_organization(self) -> OrganizationResponse:
         org = await self._require_organization()
         return await self._organization_response(org)
+
+    async def get_organization_branding(self) -> OrganizationBrandingResponse:
+        org = await self._require_organization()
+        return OrganizationBrandingResponse(
+            name=org.name,
+            logo_url=_logo_url(org.logo_storage_key),
+        )
 
     async def get_logo(self) -> tuple[bytes, str]:
         org = await self._require_organization()

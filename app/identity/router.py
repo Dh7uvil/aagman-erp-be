@@ -78,6 +78,7 @@ from app.identity.schemas import (
     LogoutRequest,
     MeResponse,
     MeUpdate,
+    OrganizationBrandingResponse,
     OrganizationResponse,
     OrganizationUpdate,
     PermissionFilter,
@@ -427,6 +428,13 @@ async def list_permissions(
     return paginated_response(permissions, params=page, total=total)
 
 
+@organization_router.get("/branding", response_model=ApiResponse[OrganizationBrandingResponse])
+async def get_organization_branding(
+    service: OrganizationServiceDependency,
+) -> ApiResponse[OrganizationBrandingResponse]:
+    return ApiResponse(data=await service.get_organization_branding())
+
+
 @organization_router.get("", response_model=ApiResponse[OrganizationResponse])
 async def get_organization(
     service: OrganizationServiceDependency,
@@ -438,7 +446,6 @@ async def get_organization(
 @organization_router.get("/logo", response_class=Response)
 async def get_organization_logo(
     service: OrganizationServiceDependency,
-    _: Annotated[CurrentUser, Depends(require_permission(SETTINGS_READ))],
 ) -> Response:
     body, content_type = await service.get_logo()
     return Response(content=body, media_type=content_type)

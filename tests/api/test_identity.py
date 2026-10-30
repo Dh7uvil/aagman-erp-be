@@ -76,6 +76,24 @@ async def test_disabled_user_cannot_login(client: AsyncClient) -> None:
     assert response.status_code == 401
 
 
+async def test_organization_branding_is_public(client: AsyncClient) -> None:
+    response = await client.get("/api/v1/organization/branding")
+    assert response.status_code == 200, response.text
+    data = response.json()["data"]
+    assert data["name"]
+
+
+async def test_organization_logo_is_public(client: AsyncClient) -> None:
+    branding = await client.get("/api/v1/organization/branding")
+    assert branding.status_code == 200, branding.text
+    logo_url = branding.json()["data"].get("logo_url")
+    if logo_url is None:
+        pytest.skip("organization has no logo")
+    response = await client.get(logo_url)
+    assert response.status_code == 200, response.text
+    assert response.headers.get("content-type", "").startswith("image/")
+
+
 async def test_organization_singleton_update(client: AsyncClient) -> None:
     email, password = await provision_admin()
     headers = await login_headers(client, email, password)
