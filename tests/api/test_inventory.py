@@ -404,6 +404,56 @@ async def test_materials_table_preference_accepts_rate_column(client: AsyncClien
     assert "price_per_unit" in body["visible_columns"]
 
 
+async def test_avg_price_and_stock_valuation_with_multiple_purchases(
+    client: AsyncClient,
+) -> None:
+    email, password = await provision_admin()
+    headers = await login_headers(client, email, password)
+    _product_id, micron_id, material_id = await _seed_product_micron_sku(client, headers)
+
+    micron = await client.get(f"/api/v1/inventory/microns/{micron_id}", headers=headers)
+    price_unit_id = micron.json()["data"]["price_unit_id"]
+    today = date.today().isoformat()
+
+    second_in = await client.post(
+        "/api/v1/inventory/material-movements",
+        headers=headers,
+        json={
+            "category_id": material_id,
+            "movement_date": today,
+            "direction": "IN",
+            "rolls": "0",
+            "kilograms": "50",
+            "price_per_unit": "150",
+            "price_unit_id": price_unit_id,
+        },
+    )
+    assert second_in.status_code == 201, second_in.text
+
+    material = await client.get(
+        f"/api/v1/inventory/material-subcategories/{material_id}",
+        headers=headers,
+    )
+    assert material.status_code == 200, material.text
+    body = material.json()["data"]
+    assert float(body["price_per_unit"]) == 150
+    assert float(body["avg_price_per_unit"]) == 67.0
+
+    report = await client.get(
+        "/api/v1/inventory/material-movements/report",
+        headers=headers,
+        params={"date": today},
+    )
+    assert report.status_code == 200, report.text
+    row = next(r for r in report.json()["data"] if r["category_id"] == material_id)
+    assert float(row["price_per_unit"]) == 150
+    assert float(row["avg_price_per_unit"]) == 67.0
+
+    dashboard = await client.get("/api/v1/inventory/dashboard/materials", headers=headers)
+    assert dashboard.status_code == 200, dashboard.text
+    assert float(dashboard.json()["data"]["kpis"]["stock_value"]) == 10050.0
+
+
 async def test_materials_report_table_preference_accepts_column_order(client: AsyncClient) -> None:
     email, password = await provision_admin()
     headers = await login_headers(client, email, password)
@@ -543,7 +593,10 @@ async def test_material_history_ledger(client: AsyncClient) -> None:
     assert history.status_code == 200, history.text
     entries = history.json()["data"]
     assert all(row["kind"] == "stock" for row in entries)
-    assert all(row["action"] in ("IN", "OUT") for row in entries)
+    assert all(row["action"] in ("IN", "OUT", "OPENING") for row in entries)
+    opening = next(row for row in entries if row["action"] == "OPENING")
+    assert float(opening["rolls"]) == 10
+    assert float(opening["kilograms"]) == 100
     roll_in = next(row for row in entries if row["action"] == "IN")
     assert float(roll_in["rolls"]) == 5
     assert roll_in["company_name"] == company_name

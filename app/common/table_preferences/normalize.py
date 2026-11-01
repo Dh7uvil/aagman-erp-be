@@ -95,6 +95,15 @@ def merge_stored(
             visible_columns=entry.default_visible(permissions),
             column_order=entry.default_order(permissions),
         )
+    stored_order_keys = {
+        key
+        for key in _dedupe([item for item in raw_order if isinstance(item, str)])
+        if key in allowed_set
+    }
+    default_visible_keys = entry.default_visible(permissions)
+    for key in default_visible_keys:
+        if key not in stored_order_keys and key not in visible:
+            visible.append(key)
     visible, order = apply_pinned(visible, order, entry.pinned_keys(permissions))
     return NormalizedPreference(
         visible_columns=visible,

@@ -116,6 +116,11 @@ TABLE_CATALOG: dict[str, TableCatalogEntry] = {
                     default_visible=False,
                     required_permission="inventory.material.view_price",
                 ),
+                TableColumnSpec(
+                    "avg_price_per_unit",
+                    default_visible=False,
+                    required_permission="inventory.material.view_price",
+                ),
                 TableColumnSpec("active", default_visible=False),
             ),
         ),
@@ -140,6 +145,11 @@ TABLE_CATALOG: dict[str, TableCatalogEntry] = {
                 TableColumnSpec(
                     "price_per_unit",
                     default_visible=True,
+                    required_permission="inventory.material.view_price",
+                ),
+                TableColumnSpec(
+                    "avg_price_per_unit",
+                    default_visible=False,
                     required_permission="inventory.material.view_price",
                 ),
             ),

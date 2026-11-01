@@ -26,6 +26,7 @@ from app.identity.models import Company, User
 from app.inventory.catalog import MATERIAL_VIEW_PRICE
 from app.inventory.models import InventoryUnit, MaterialCategory, MaterialMovement
 from app.identity.schemas import AuditLogUserSummary
+from app.inventory.pricing import compute_avg_price
 from app.inventory.repository import (
     CategoryRepository,
     CompanyLookupRepository,
@@ -189,7 +190,12 @@ class InventoryService:
         if can_view_price:
             return response
         return response.model_copy(
-            update={"price_per_unit": None, "price_unit_id": None, "price_unit_code": None},
+            update={
+                "price_per_unit": None,
+                "price_unit_id": None,
+                "price_unit_code": None,
+                "avg_price_per_unit": None,
+            },
         )
 
     @staticmethod
@@ -268,6 +274,13 @@ class InventoryService:
             result.append(self._apply_price_micron(response, can_view_price=can_view_price))
         return result
 
+    async def _avg_prices_by_sku_ids(self, sku_ids: list[UUID]) -> dict[UUID, Decimal | None]:
+        stats_map = await self.movements.purchase_price_stats_by_category_ids(sku_ids)
+        return {
+            sku_id: self._display_decimal(compute_avg_price(stats_map.get(sku_id)))
+            for sku_id in sku_ids
+        }
+
     async def _material_response(
         self,
         row: MaterialCategory,
@@ -289,6 +302,7 @@ class InventoryService:
         if company_id:
             names = await self._company_name_map([company_id])
             company_name = names.get(company_id, "")
+        avg_prices = await self._avg_prices_by_sku_ids([row.id])
         response = MaterialResponse(
             id=row.id,
             company_id=company_id,
@@ -310,6 +324,7 @@ class InventoryService:
             price_per_unit=self._display_decimal(micron.price_per_unit) if micron else None,
             price_unit_id=micron.price_unit_id if micron else None,
             price_unit_code=price_unit.code if price_unit else None,
+            avg_price_per_unit=avg_prices.get(row.id),
             is_active=row.is_active,
             created_at=row.created_at,
             updated_at=row.updated_at,
@@ -338,6 +353,7 @@ class InventoryService:
             if micron.price_unit_id:
                 unit_ids.append(micron.price_unit_id)
         units = await self.unit_lookup.get_units_by_ids(unit_ids)
+        avg_prices = await self._avg_prices_by_sku_ids([row.id for row in rows])
         result: list[MaterialResponse] = []
         for row in rows:
             micron = microns.get(row.parent_id) if row.parent_id else None
@@ -369,6 +385,7 @@ class InventoryService:
                 price_per_unit=self._display_decimal(micron.price_per_unit) if micron else None,
                 price_unit_id=micron.price_unit_id if micron else None,
                 price_unit_code=price_unit.code if price_unit else None,
+                avg_price_per_unit=avg_prices.get(row.id),
                 is_active=row.is_active,
                 created_at=row.created_at,
                 updated_at=row.updated_at,
@@ -1046,7 +1063,13 @@ class InventoryService:
             size_unit = units.get(sku.size_unit_id)
             size_code = size_unit.code if size_unit else ""
         size_val = self._display_decimal(sku.size or Decimal("0")) or Decimal("0")
+        price_unit_code: str | None = None
+        if micron and micron.price_unit_id:
+            units = await self.unit_lookup.get_units_by_ids([micron.price_unit_id])
+            price_unit = units.get(micron.price_unit_id)
+            price_unit_code = price_unit.code if price_unit else None
         can_view_price = self._can_view_price(permissions)
+        avg_prices = await self._avg_prices_by_sku_ids([material_id])
         last = await self.movements.last_purchase_movement(material_id)
         last_price: Decimal | None = None
         last_price_code: str | None = None
@@ -1068,6 +1091,8 @@ class InventoryService:
             last_purchase_price_unit_code=last_price_code if can_view_price else None,
             last_purchase_date=last_date,
             last_purchase_rolls=last_rolls,
+            avg_price_per_unit=avg_prices.get(material_id) if can_view_price else None,
+            price_unit_code=price_unit_code,
         )
 
     # Movements
@@ -1243,6 +1268,11 @@ class InventoryService:
             if micron.price_unit_id:
                 unit_ids.append(micron.price_unit_id)
         units = await self.unit_lookup.get_units_by_ids(unit_ids)
+        avg_prices = (
+            await self._avg_prices_by_sku_ids([sku.id for sku in skus])
+            if can_view_price
+            else {}
+        )
         rows: list[DayReportRow] = []
         for sku in skus:
             micron = microns.get(sku.parent_id) if sku.parent_id else None
@@ -1280,6 +1310,7 @@ class InventoryService:
                     closing_kg=self._display_decimal(closing_kg) or Decimal("0"),
                     price_per_unit=self._display_decimal(price),
                     price_unit_code=price_code,
+                    avg_price_per_unit=avg_prices.get(sku.id) if can_view_price else None,
                 ),
             )
         return rows

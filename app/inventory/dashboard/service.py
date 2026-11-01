@@ -10,6 +10,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.permissions import has_permission
 from app.inventory.catalog import JOB_VIEW_PRICE, MATERIAL_VIEW_PRICE
 from app.inventory.dashboard.repository import DashboardRepository
+from app.inventory.pricing import valuation_unit_price
+from app.inventory.repository import MovementRepository
 from app.inventory.dashboard.schemas import (
     DashboardRange,
     JobActivityBucket,
@@ -37,6 +39,24 @@ class DashboardService:
     @classmethod
     def _quantize(cls, value: Decimal) -> Decimal:
         return value.quantize(cls._DISPLAY_QUANTUM)
+
+    async def _materials_stock_value_kg_priced(self) -> tuple[Decimal, int]:
+        rows = await self.repo.list_kg_priced_sku_valuation_rows()
+        if not rows:
+            return Decimal("0"), 0
+        sku_ids = [sku_id for sku_id, _, _ in rows]
+        stats_map = await MovementRepository(self.session).purchase_price_stats_by_category_ids(
+            sku_ids,
+        )
+        total = Decimal("0")
+        valued_count = 0
+        for sku_id, total_kg, micron_price in rows:
+            unit_price = valuation_unit_price(micron_price, stats_map.get(sku_id))
+            if unit_price is None:
+                continue
+            total += total_kg * unit_price
+            valued_count += 1
+        return total, valued_count
 
     @staticmethod
     def _resolve_range(range_params: DashboardRange) -> tuple[date, date, bool]:
@@ -131,7 +151,7 @@ class DashboardService:
         stock_value: Decimal | None = None
         valued_count = 0
         if can_view_price:
-            stock_value_raw, valued_count = await self.repo.materials_stock_value_kg_priced()
+            stock_value_raw, valued_count = await self._materials_stock_value_kg_priced()
             stock_value = self._quantize(stock_value_raw)
 
         movement_rows = await self.repo.movement_kg_buckets(

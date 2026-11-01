@@ -187,6 +187,7 @@ class MaterialResponse(BaseModel):
     price_per_unit: Decimal | None = None
     price_unit_id: UUID | None = None
     price_unit_code: str | None = None
+    avg_price_per_unit: Decimal | None = None
     is_active: bool
     created_at: datetime
     updated_at: datetime
@@ -302,6 +303,8 @@ class MaterialHistorySummary(BaseModel):
     last_purchase_price_unit_code: str | None = None
     last_purchase_date: date | None = None
     last_purchase_rolls: Decimal | None = None
+    avg_price_per_unit: Decimal | None = None
+    price_unit_code: str | None = None
 
 
 class DayReportRow(BaseModel):
@@ -324,3 +327,4 @@ class DayReportRow(BaseModel):
     closing_kg: Decimal
     price_per_unit: Decimal | None = None
     price_unit_code: str | None = None
+    avg_price_per_unit: Decimal | None = None

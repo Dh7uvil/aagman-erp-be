@@ -7,9 +7,12 @@ from datetime import date
 from decimal import Decimal
 from uuid import UUID
 
-from sqlalchemy import Select, func, literal, select
+from sqlalchemy import Select, func, literal, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import aliased
 from sqlalchemy.sql.elements import ColumnElement
+
+from app.inventory.pricing import PurchasePriceStats
 
 from app.common.models.audit_log import AuditLog
 from app.common.repositories.base import BaseRepository
@@ -317,6 +320,56 @@ class MovementRepository:
         )
         return {row[0] for row in rows.all()}
 
+    async def purchase_price_stats_by_category_ids(
+        self,
+        category_ids: Sequence[UUID],
+    ) -> dict[UUID, PurchasePriceStats]:
+        unique = list(dict.fromkeys(category_ids))
+        if not unique:
+            return {}
+        sku = aliased(MaterialCategory)
+        micron = aliased(MaterialCategory)
+        rows = await self.session.execute(
+            select(
+                MaterialMovement.category_id,
+                func.count(),
+                func.coalesce(func.sum(MaterialMovement.kilograms), 0),
+                func.coalesce(
+                    func.sum(MaterialMovement.kilograms * MaterialMovement.price_per_unit),
+                    0,
+                ),
+                func.coalesce(func.sum(MaterialMovement.price_per_unit), 0),
+            )
+            .select_from(MaterialMovement)
+            .join(sku, MaterialMovement.category_id == sku.id)
+            .join(micron, sku.parent_id == micron.id)
+            .where(
+                MaterialMovement.category_id.in_(unique),
+                MaterialMovement.deleted_at.is_(None),
+                MaterialMovement.direction.in_(
+                    (
+                        MaterialMovementDirection.IN.value,
+                        MaterialMovementDirection.OPENING.value,
+                    )
+                ),
+                MaterialMovement.price_per_unit.is_not(None),
+                or_(
+                    MaterialMovement.price_unit_id.is_(None),
+                    MaterialMovement.price_unit_id == micron.price_unit_id,
+                ),
+            )
+            .group_by(MaterialMovement.category_id)
+        )
+        return {
+            category_id: PurchasePriceStats(
+                priced_count=int(count),
+                sum_kg=Decimal(sum_kg or 0),
+                sum_kg_price=Decimal(sum_kg_price or 0),
+                sum_price=Decimal(sum_price or 0),
+            )
+            for category_id, count, sum_kg, sum_kg_price, sum_price in rows.all()
+        }
+
     async def last_purchase_movement(self, category_id: UUID) -> MaterialMovement | None:
         result = await self.session.execute(
             select(MaterialMovement)
@@ -347,7 +400,7 @@ class MaterialHistoryRepository:
         *,
         page: PageParams,
     ) -> tuple[list[tuple[str, UUID]], int]:
-        """Stock in/out movement ids only (excludes opening balances and material edits)."""
+        """Stock ledger movement ids (IN, OUT, and opening balances; excludes material edit audit)."""
         criteria = (
             MaterialMovement.category_id == category_id,
             MaterialMovement.deleted_at.is_(None),
@@ -355,6 +408,7 @@ class MaterialHistoryRepository:
                 (
                     MaterialMovementDirection.IN.value,
                     MaterialMovementDirection.OUT.value,
+                    MaterialMovementDirection.OPENING.value,
                 )
             ),
         )

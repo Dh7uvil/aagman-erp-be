@@ -199,15 +199,16 @@ class DashboardRepository:
             int(out_of_stock or 0),
         )
 
-    async def materials_stock_value_kg_priced(self) -> tuple[Decimal, int]:
+    async def list_kg_priced_sku_valuation_rows(
+        self,
+    ) -> list[tuple[UUID, Decimal, Decimal | None]]:
+        """Active SKUs with kg-priced microns: (sku_id, total_kg, micron current price)."""
         micron = aliased(MaterialCategory)
         rows = await self.session.execute(
             select(
-                func.coalesce(
-                    func.sum(MaterialCategory.total_kg * micron.price_per_unit),
-                    0,
-                ),
-                func.count(),
+                MaterialCategory.id,
+                MaterialCategory.total_kg,
+                micron.price_per_unit,
             )
             .select_from(MaterialCategory)
             .join(micron, MaterialCategory.parent_id == micron.id)
@@ -222,8 +223,16 @@ class DashboardRepository:
                 micron.price_per_unit.is_not(None),
             )
         )
-        row = rows.one()
-        return Decimal(row[0] or 0), int(row[1] or 0)
+        result: list[tuple[UUID, Decimal, Decimal | None]] = []
+        for sku_id, total_kg, micron_price in rows.all():
+            result.append(
+                (
+                    sku_id,
+                    Decimal(total_kg or 0),
+                    Decimal(micron_price) if micron_price is not None else None,
+                )
+            )
+        return result
 
     async def movement_kg_buckets(
         self,
