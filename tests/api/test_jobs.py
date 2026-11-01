@@ -49,19 +49,6 @@ async def test_jobs_crud_pause_return_and_files(client: AsyncClient) -> None:
     job_id = create.json()["data"]["id"]
     assert create.json()["data"]["cylinder_count"] == 2
 
-    complete_payload = _job_payload(company_id)
-    complete_payload["status"] = "COMPLETED"
-    complete_payload["cylinder_cost"] = "245.00"
-    updated = await client.patch(
-        f"/api/v1/inventory/jobs/{job_id}",
-        headers=headers,
-        json=complete_payload,
-    )
-    assert updated.status_code == 200, updated.text
-    assert updated.json()["data"]["status"] == "COMPLETED"
-    assert len(updated.json()["data"]["colors"]) == 1
-    assert len(updated.json()["data"]["cylinders"]) == 2
-
     listing = await client.get("/api/v1/inventory/jobs", headers=headers)
     assert listing.status_code == 200
     assert any(row["id"] == job_id for row in listing.json()["data"])
@@ -102,6 +89,22 @@ async def test_jobs_crud_pause_return_and_files(client: AsyncClient) -> None:
 
     default_list_after_resume = await client.get("/api/v1/inventory/jobs", headers=headers)
     assert any(row["id"] == job_id for row in default_list_after_resume.json()["data"])
+
+    complete_payload = _job_payload(company_id)
+    complete_payload["status"] = "COMPLETED"
+    complete_payload["cylinder_cost"] = "245.00"
+    updated = await client.patch(
+        f"/api/v1/inventory/jobs/{job_id}",
+        headers=headers,
+        json=complete_payload,
+    )
+    assert updated.status_code == 200, updated.text
+    assert updated.json()["data"]["status"] == "COMPLETED"
+    assert len(updated.json()["data"]["colors"]) == 1
+    assert len(updated.json()["data"]["cylinders"]) == 2
+
+    completed_list = await client.get("/api/v1/inventory/jobs", headers=headers)
+    assert any(row["id"] == job_id for row in completed_list.json()["data"])
 
     history = await client.get(f"/api/v1/inventory/jobs/{job_id}/history", headers=headers)
     assert history.status_code == 200, history.text

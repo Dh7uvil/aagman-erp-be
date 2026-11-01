@@ -109,7 +109,15 @@ class JobService:
             filters["company_id"] = company_id
         extra: list[ColumnElement[bool]] = []
         if status is None and not include_closed:
-            extra.append(Job.status.in_([JobStatus.ACTIVE.value, JobStatus.RESUMED.value]))
+            extra.append(
+                Job.status.in_(
+                    [
+                        JobStatus.ACTIVE.value,
+                        JobStatus.RESUMED.value,
+                        JobStatus.COMPLETED.value,
+                    ]
+                )
+            )
         rows, total = await self.repo.list(
             page=page,
             common_filter=common_filter,
