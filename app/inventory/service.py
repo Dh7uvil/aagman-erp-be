@@ -26,7 +26,7 @@ from app.identity.models import Company, User
 from app.inventory.catalog import MATERIAL_VIEW_PRICE
 from app.inventory.models import InventoryUnit, MaterialCategory, MaterialMovement
 from app.identity.schemas import AuditLogUserSummary
-from app.inventory.pricing import compute_avg_price
+from app.inventory.pricing import compute_avg_price, merge_purchase_price_stats
 from app.inventory.repository import (
     CategoryRepository,
     CompanyLookupRepository,
@@ -206,7 +206,7 @@ class InventoryService:
     ) -> MicronResponse:
         if can_view_price:
             return response
-        return response.model_copy(update={"price_per_unit": None})
+        return response.model_copy(update={"price_per_unit": None, "avg_price_per_unit": None})
 
     async def _micron_response(
         self,
@@ -224,6 +224,7 @@ class InventoryService:
             units = await self.unit_lookup.get_units_by_ids([row.price_unit_id])
             unit = units.get(row.price_unit_id)
             price_unit_code = unit.code if unit else ""
+        avg_prices = await self._avg_prices_by_micron_ids([row.id])
         response = MicronResponse(
             id=row.id,
             product_id=row.parent_id or row.id,
@@ -234,6 +235,7 @@ class InventoryService:
             price_per_unit=self._display_decimal(row.price_per_unit),
             price_unit_id=row.price_unit_id,
             price_unit_code=price_unit_code,
+            avg_price_per_unit=avg_prices.get(row.id),
             is_active=row.is_active,
             created_at=row.created_at,
             updated_at=row.updated_at,
@@ -252,6 +254,7 @@ class InventoryService:
         company_names = await self._company_name_map(company_ids)
         price_unit_ids = [row.price_unit_id for row in rows if row.price_unit_id]
         units = await self.unit_lookup.get_units_by_ids(price_unit_ids)
+        avg_prices = await self._avg_prices_by_micron_ids([row.id for row in rows])
         result: list[MicronResponse] = []
         for row in rows:
             product = products.get(row.parent_id) if row.parent_id else None
@@ -267,12 +270,34 @@ class InventoryService:
                 price_per_unit=self._display_decimal(row.price_per_unit),
                 price_unit_id=row.price_unit_id,
                 price_unit_code=price_unit.code if price_unit else "",
+                avg_price_per_unit=avg_prices.get(row.id),
                 is_active=row.is_active,
                 created_at=row.created_at,
                 updated_at=row.updated_at,
             )
             result.append(self._apply_price_micron(response, can_view_price=can_view_price))
         return result
+
+    async def _avg_prices_by_micron_ids(
+        self,
+        micron_ids: list[UUID],
+    ) -> dict[UUID, Decimal | None]:
+        unique = list(dict.fromkeys(micron_ids))
+        if not unique:
+            return {}
+        sku_by_micron = await self.categories.sku_ids_grouped_by_micron_ids(unique)
+        all_sku_ids = [sku_id for sku_ids in sku_by_micron.values() for sku_id in sku_ids]
+        stats_map = await self.movements.purchase_price_stats_by_category_ids(all_sku_ids)
+        return {
+            micron_id: self._display_decimal(
+                compute_avg_price(
+                    merge_purchase_price_stats(
+                        [stats_map.get(sku_id) for sku_id in sku_by_micron.get(micron_id, [])],
+                    ),
+                ),
+            )
+            for micron_id in unique
+        }
 
     async def _avg_prices_by_sku_ids(self, sku_ids: list[UUID]) -> dict[UUID, Decimal | None]:
         stats_map = await self.movements.purchase_price_stats_by_category_ids(sku_ids)

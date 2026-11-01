@@ -145,6 +145,26 @@ class CategoryRepository:
         )
         return list(result.scalars().all())
 
+    async def sku_ids_grouped_by_micron_ids(
+        self,
+        micron_ids: Sequence[UUID],
+    ) -> dict[UUID, list[UUID]]:
+        unique = list(dict.fromkeys(micron_ids))
+        if not unique:
+            return {}
+        result = await self.session.execute(
+            select(MaterialCategory.parent_id, MaterialCategory.id).where(
+                MaterialCategory.parent_id.in_(unique),
+                MaterialCategory.category_kind == MaterialCategoryKind.SKU.value,
+                MaterialCategory.deleted_at.is_(None),
+            )
+        )
+        grouped: dict[UUID, list[UUID]] = {micron_id: [] for micron_id in unique}
+        for parent_id, sku_id in result.all():
+            if parent_id is not None:
+                grouped.setdefault(parent_id, []).append(sku_id)
+        return grouped
+
     async def get_by_ids(self, ids: Sequence[UUID]) -> dict[UUID, MaterialCategory]:
         unique = list(dict.fromkeys(ids))
         if not unique:

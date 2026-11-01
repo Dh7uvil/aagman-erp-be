@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from dataclasses import dataclass
 from decimal import Decimal
 
@@ -20,6 +21,30 @@ def compute_avg_price(stats: PurchasePriceStats | None) -> Decimal | None:
     if stats.sum_kg > 0:
         return stats.sum_kg_price / stats.sum_kg
     return stats.sum_price / Decimal(stats.priced_count)
+
+
+def merge_purchase_price_stats(
+    stats_list: Sequence[PurchasePriceStats | None],
+) -> PurchasePriceStats | None:
+    priced_count = 0
+    sum_kg = Decimal(0)
+    sum_kg_price = Decimal(0)
+    sum_price = Decimal(0)
+    for stats in stats_list:
+        if stats is None or stats.priced_count == 0:
+            continue
+        priced_count += stats.priced_count
+        sum_kg += stats.sum_kg
+        sum_kg_price += stats.sum_kg_price
+        sum_price += stats.sum_price
+    if priced_count == 0:
+        return None
+    return PurchasePriceStats(
+        priced_count=priced_count,
+        sum_kg=sum_kg,
+        sum_kg_price=sum_kg_price,
+        sum_price=sum_price,
+    )
 
 
 def valuation_unit_price(

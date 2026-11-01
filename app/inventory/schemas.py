@@ -106,6 +106,7 @@ class MicronResponse(BaseModel):
     price_per_unit: Decimal | None = None
     price_unit_id: UUID | None = None
     price_unit_code: str
+    avg_price_per_unit: Decimal | None = None
     is_active: bool
     created_at: datetime
     updated_at: datetime
