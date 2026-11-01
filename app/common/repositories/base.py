@@ -178,4 +178,5 @@ class BaseRepository[ModelT: SoftDeleteModel]:
             return None
         self._set_attribute(entity, "deleted_at", utcnow())
         await self.session.flush()
+        await self.session.refresh(entity, attribute_names=["updated_at", "deleted_at"])
         return entity

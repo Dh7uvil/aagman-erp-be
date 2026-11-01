@@ -13,6 +13,7 @@ MATERIAL_READ = build_permission(INVENTORY_MODULE, "material", "read")
 MATERIAL_UPDATE = build_permission(INVENTORY_MODULE, "material", "update")
 MATERIAL_DELETE = build_permission(INVENTORY_MODULE, "material", "delete")
 MATERIAL_VIEW_PRICE = build_permission(INVENTORY_MODULE, "material", "view_price")
+MATERIAL_HISTORY = build_permission(INVENTORY_MODULE, "material", "history")
 
 MATERIALS_REPORT_READ = build_permission(INVENTORY_MODULE, "materials_report", "read")
 
@@ -40,7 +41,7 @@ CYLINDER_RETURN_DELETE = build_permission(INVENTORY_MODULE, "cylinder_return", "
 
 _CATALOG: dict[str, tuple[str, ...]] = {
     "unit": ("create", "read", "update", "delete"),
-    "material": ("create", "read", "update", "delete", "view_price"),
+    "material": ("create", "read", "update", "delete", "view_price", "history"),
     "materials_report": ("read",),
     "job": ("create", "read", "update", "delete", "view_price", "history"),
     "job_image": ("create", "read", "update", "delete"),

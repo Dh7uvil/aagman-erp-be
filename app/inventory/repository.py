@@ -7,14 +7,16 @@ from datetime import date
 from decimal import Decimal
 from uuid import UUID
 
-from sqlalchemy import Select, func, select
+from sqlalchemy import Select, func, literal, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.sql.elements import ColumnElement
 
+from app.common.models.audit_log import AuditLog
 from app.common.repositories.base import BaseRepository
 from app.common.schemas.filters import BaseFilter
 from app.common.schemas.pagination import PageParams
 from app.core.enums import MaterialCategoryKind, MaterialMovementDirection
+from app.identity.models import Company
 from app.inventory.models import InventoryUnit, MaterialCategory, MaterialMovement
 
 
@@ -67,7 +69,7 @@ class CategoryRepository:
             session,
             MaterialCategory,
             allowed_sort_fields=frozenset({"created_at", "updated_at", "name", "size"}),
-            allowed_filter_fields=frozenset({"is_active", "parent_id", "category_kind"}),
+            allowed_filter_fields=frozenset({"is_active", "parent_id", "category_kind", "company_id"}),
             search_fields=frozenset({"name"}),
         )
 
@@ -114,9 +116,26 @@ class CategoryRepository:
         return int(total or 0)
 
     async def micron_ids_for_product(self, product_id: UUID) -> list[UUID]:
+        return await self.micron_ids_for_products([product_id])
+
+    async def product_ids_for_company(self, company_id: UUID) -> list[UUID]:
         result = await self.session.execute(
             select(MaterialCategory.id).where(
-                MaterialCategory.parent_id == product_id,
+                MaterialCategory.company_id == company_id,
+                MaterialCategory.category_kind == MaterialCategoryKind.PRODUCT.value,
+                MaterialCategory.parent_id.is_(None),
+                MaterialCategory.deleted_at.is_(None),
+            )
+        )
+        return list(result.scalars().all())
+
+    async def micron_ids_for_products(self, product_ids: Sequence[UUID]) -> list[UUID]:
+        unique = list(dict.fromkeys(product_ids))
+        if not unique:
+            return []
+        result = await self.session.execute(
+            select(MaterialCategory.id).where(
+                MaterialCategory.parent_id.in_(unique),
                 MaterialCategory.category_kind == MaterialCategoryKind.MICRON.value,
                 MaterialCategory.deleted_at.is_(None),
             )
@@ -146,6 +165,23 @@ class CategoryRepository:
             .order_by(MaterialCategory.name)
         )
         return result.scalars().all()
+
+
+class CompanyLookupRepository:
+    def __init__(self, session: AsyncSession) -> None:
+        self.session = session
+
+    async def companies_by_ids(self, ids: Sequence[UUID]) -> dict[UUID, Company]:
+        unique = list(dict.fromkeys(ids))
+        if not unique:
+            return {}
+        result = await self.session.execute(
+            select(Company).where(
+                Company.id.in_(unique),
+                Company.deleted_at.is_(None),
+            )
+        )
+        return {row.id: row for row in result.scalars().all()}
 
 
 class UnitLookupRepository:
@@ -280,3 +316,76 @@ class MovementRepository:
             .distinct()
         )
         return {row[0] for row in rows.all()}
+
+    async def last_purchase_movement(self, category_id: UUID) -> MaterialMovement | None:
+        result = await self.session.execute(
+            select(MaterialMovement)
+            .where(
+                MaterialMovement.category_id == category_id,
+                MaterialMovement.deleted_at.is_(None),
+                MaterialMovement.direction.in_(
+                    (
+                        MaterialMovementDirection.IN.value,
+                        MaterialMovementDirection.OPENING.value,
+                    )
+                ),
+            )
+            .order_by(MaterialMovement.created_at.desc())
+            .limit(1)
+        )
+        return result.scalar_one_or_none()
+
+
+class MaterialHistoryRepository:
+    def __init__(self, session: AsyncSession) -> None:
+        self.session = session
+        self.movements = MovementRepository(session)
+
+    async def list_entry_refs(
+        self,
+        category_id: UUID,
+        *,
+        page: PageParams,
+    ) -> tuple[list[tuple[str, UUID]], int]:
+        """Stock in/out movement ids only (excludes opening balances and material edits)."""
+        criteria = (
+            MaterialMovement.category_id == category_id,
+            MaterialMovement.deleted_at.is_(None),
+            MaterialMovement.direction.in_(
+                (
+                    MaterialMovementDirection.IN.value,
+                    MaterialMovementDirection.OUT.value,
+                )
+            ),
+        )
+        total = await self.session.scalar(
+            select(func.count()).select_from(MaterialMovement).where(*criteria),
+        )
+        offset = (page.page - 1) * page.page_size
+        rows = await self.session.execute(
+            select(literal("stock"), MaterialMovement.id)
+            .where(*criteria)
+            .order_by(MaterialMovement.created_at.desc())
+            .offset(offset)
+            .limit(page.page_size)
+        )
+        return [(str(kind), entry_id) for kind, entry_id in rows.all()], int(total or 0)
+
+    async def get_movements_by_ids(self, ids: Sequence[UUID]) -> dict[UUID, MaterialMovement]:
+        unique = list(dict.fromkeys(ids))
+        if not unique:
+            return {}
+        result = await self.session.execute(
+            select(MaterialMovement).where(
+                MaterialMovement.id.in_(unique),
+                MaterialMovement.deleted_at.is_(None),
+            )
+        )
+        return {row.id: row for row in result.scalars().all()}
+
+    async def get_audit_logs_by_ids(self, ids: Sequence[UUID]) -> dict[UUID, AuditLog]:
+        unique = list(dict.fromkeys(ids))
+        if not unique:
+            return {}
+        result = await self.session.execute(select(AuditLog).where(AuditLog.id.in_(unique)))
+        return {row.id: row for row in result.scalars().all()}

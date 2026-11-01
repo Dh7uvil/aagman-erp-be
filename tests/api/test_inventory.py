@@ -8,6 +8,16 @@ from httpx import AsyncClient
 from tests.conftest import login_headers, provision_admin
 
 
+async def _create_company(client: AsyncClient, headers: dict[str, str]) -> str:
+    response = await client.post(
+        "/api/v1/companies",
+        headers=headers,
+        json={"name": f"Co-{uuid4().hex[:8]}"},
+    )
+    assert response.status_code == 201, response.text
+    return response.json()["data"]["id"]
+
+
 async def _unit_id_by_code(client: AsyncClient, headers: dict[str, str], code: str) -> str:
     response = await client.get(
         "/api/v1/inventory/units",
@@ -26,11 +36,12 @@ async def _seed_product_micron_sku(
     headers: dict[str, str],
 ) -> tuple[str, str, str]:
     mm_unit_id = await _unit_id_by_code(client, headers, "mm")
+    company_id = await _create_company(client, headers)
 
     product = await client.post(
         "/api/v1/inventory/material-categories",
         headers=headers,
-        json={"name": f"Prod-{uuid4().hex[:6]}"},
+        json={"name": f"Prod-{uuid4().hex[:6]}", "company_id": company_id},
     )
     assert product.status_code == 201, product.text
     product_id = product.json()["data"]["id"]
@@ -69,6 +80,79 @@ async def _seed_product_micron_sku(
     assert body["size_unit_code"] == "mm"
     assert body["size_label"] == "300.00 mm"
     return product_id, micron_id, material_id
+
+
+async def test_material_skus_save_under_correct_microns(client: AsyncClient) -> None:
+    email, password = await provision_admin()
+    headers = await login_headers(client, email, password)
+    mm_unit_id = await _unit_id_by_code(client, headers, "mm")
+    company_id = await _create_company(client, headers)
+
+    product = await client.post(
+        "/api/v1/inventory/material-categories",
+        headers=headers,
+        json={"name": f"Prod-{uuid4().hex[:6]}", "company_id": company_id},
+    )
+    assert product.status_code == 201, product.text
+    product_id = product.json()["data"]["id"]
+
+    micron_a = await client.post(
+        "/api/v1/inventory/microns",
+        headers=headers,
+        json={"product_id": product_id, "name": "12 MIC"},
+    )
+    micron_b = await client.post(
+        "/api/v1/inventory/microns",
+        headers=headers,
+        json={"product_id": product_id, "name": "18 MIC"},
+    )
+    assert micron_a.status_code == 201, micron_a.text
+    assert micron_b.status_code == 201, micron_b.text
+    micron_a_id = micron_a.json()["data"]["id"]
+    micron_b_id = micron_b.json()["data"]["id"]
+
+    sku_a = await client.post(
+        "/api/v1/inventory/material-subcategories",
+        headers=headers,
+        json={
+            "parent_id": micron_a_id,
+            "size": "300",
+            "size_unit_id": mm_unit_id,
+        },
+    )
+    sku_b = await client.post(
+        "/api/v1/inventory/material-subcategories",
+        headers=headers,
+        json={
+            "parent_id": micron_b_id,
+            "size": "300",
+            "size_unit_id": mm_unit_id,
+        },
+    )
+    assert sku_a.status_code == 201, sku_a.text
+    assert sku_b.status_code == 201, sku_b.text
+    sku_a_id = sku_a.json()["data"]["id"]
+
+    listed = await client.get(
+        "/api/v1/inventory/material-subcategories",
+        headers=headers,
+        params={"product_id": product_id, "page_size": 50},
+    )
+    assert listed.status_code == 200, listed.text
+    rows = listed.json()["data"]
+    assert len(rows) == 2
+    micron_ids = {row["micron_id"] for row in rows}
+    assert micron_ids == {micron_a_id, micron_b_id}
+
+    moved = await client.patch(
+        f"/api/v1/inventory/material-subcategories/{sku_a_id}",
+        headers=headers,
+        json={"parent_id": micron_b_id, "size": "350"},
+    )
+    assert moved.status_code == 200, moved.text
+    body = moved.json()["data"]
+    assert body["micron_id"] == micron_b_id
+    assert float(body["size"]) == 350
 
 
 async def test_inventory_crud_and_movements(client: AsyncClient) -> None:
@@ -139,6 +223,96 @@ async def test_inventory_crud_and_movements(client: AsyncClient) -> None:
     assert float(rows[0]["in_rolls"]) == 5
     assert float(rows[0]["closing_rolls"]) == 15
     assert rows[0]["size_label"] == "300.00 mm"
+
+
+async def test_incoming_movement_stores_purchase_price(client: AsyncClient) -> None:
+    email, password = await provision_admin()
+    headers = await login_headers(client, email, password)
+    _product_id, micron_id, material_id = await _seed_product_micron_sku(client, headers)
+
+    micron = await client.get(f"/api/v1/inventory/microns/{micron_id}", headers=headers)
+    assert micron.status_code == 200, micron.text
+    price_unit_id = micron.json()["data"]["price_unit_id"]
+
+    today = date.today().isoformat()
+    movement_in = await client.post(
+        "/api/v1/inventory/material-movements",
+        headers=headers,
+        json={
+            "category_id": material_id,
+            "movement_date": today,
+            "direction": "IN",
+            "rolls": "3",
+            "kilograms": "0",
+            "price_per_unit": "99.5",
+            "price_unit_id": price_unit_id,
+            "note": "New purchase batch",
+        },
+    )
+    assert movement_in.status_code == 201, movement_in.text
+
+    history = await client.get(
+        f"/api/v1/inventory/material-subcategories/{material_id}/history",
+        headers=headers,
+    )
+    assert history.status_code == 200
+    stock_rows = [row for row in history.json()["data"] if row["kind"] == "stock" and row["action"] == "IN"]
+    assert any(float(row["price_per_unit"]) == 99.5 for row in stock_rows)
+
+    micron_after = await client.get(f"/api/v1/inventory/microns/{micron_id}", headers=headers)
+    assert float(micron_after.json()["data"]["price_per_unit"]) == 99.5
+
+
+async def test_material_history_keeps_purchase_price_when_micron_price_changes(
+    client: AsyncClient,
+) -> None:
+    email, password = await provision_admin()
+    headers = await login_headers(client, email, password)
+    _product_id, micron_id, material_id = await _seed_product_micron_sku(client, headers)
+
+    micron = await client.get(f"/api/v1/inventory/microns/{micron_id}", headers=headers)
+    price_unit_id = micron.json()["data"]["price_unit_id"]
+    today = date.today().isoformat()
+
+    purchase = await client.post(
+        "/api/v1/inventory/material-movements",
+        headers=headers,
+        json={
+            "category_id": material_id,
+            "movement_date": today,
+            "direction": "IN",
+            "rolls": "2",
+            "kilograms": "0",
+            "price_per_unit": "88",
+            "price_unit_id": price_unit_id,
+        },
+    )
+    assert purchase.status_code == 201, purchase.text
+
+    micron_update = await client.patch(
+        f"/api/v1/inventory/microns/{micron_id}",
+        headers=headers,
+        json={"price_per_unit": "150", "price_unit_id": price_unit_id},
+    )
+    assert micron_update.status_code == 200, micron_update.text
+
+    history = await client.get(
+        f"/api/v1/inventory/material-subcategories/{material_id}/history",
+        headers=headers,
+        params={"page_size": 50},
+    )
+    assert history.status_code == 200, history.text
+    stock_rows = history.json()["data"]
+    assert all(row["action"] in ("IN", "OUT") for row in stock_rows)
+    last_in = next(row for row in stock_rows if row["action"] == "IN" and float(row["rolls"]) == 2)
+    assert float(last_in["price_per_unit"]) == 88
+
+    summary = await client.get(
+        f"/api/v1/inventory/material-subcategories/{material_id}/history-summary",
+        headers=headers,
+    )
+    assert summary.status_code == 200, summary.text
+    assert float(summary.json()["data"]["last_purchase_price"]) == 88
 
 
 async def test_day_report_lists_all_materials_without_daily_movements(client: AsyncClient) -> None:
@@ -245,3 +419,198 @@ async def test_materials_report_table_preference_accepts_column_order(client: As
     body = response.json()["data"]
     assert body["is_default"] is False
     assert body["column_order"][:4] == ["size", "in_rolls", "closing_kg", "product"]
+
+
+async def test_product_name_unique_per_company(client: AsyncClient) -> None:
+    email, password = await provision_admin()
+    headers = await login_headers(client, email, password)
+    company_a = await _create_company(client, headers)
+    company_b = await _create_company(client, headers)
+    name = f"Shared-{uuid4().hex[:6]}"
+
+    first = await client.post(
+        "/api/v1/inventory/material-categories",
+        headers=headers,
+        json={"name": name, "company_id": company_a},
+    )
+    second = await client.post(
+        "/api/v1/inventory/material-categories",
+        headers=headers,
+        json={"name": name, "company_id": company_b},
+    )
+    duplicate = await client.post(
+        "/api/v1/inventory/material-categories",
+        headers=headers,
+        json={"name": name, "company_id": company_a},
+    )
+    assert first.status_code == 201, first.text
+    assert second.status_code == 201, second.text
+    assert duplicate.status_code == 409, duplicate.text
+
+
+async def test_material_list_filter_by_company(client: AsyncClient) -> None:
+    email, password = await provision_admin()
+    headers = await login_headers(client, email, password)
+    company_a = await _create_company(client, headers)
+    company_b = await _create_company(client, headers)
+    mm_unit_id = await _unit_id_by_code(client, headers, "mm")
+
+    async def seed_for_company(company_id: str, label: str) -> str:
+        product = await client.post(
+            "/api/v1/inventory/material-categories",
+            headers=headers,
+            json={"name": f"Prod-{label}-{uuid4().hex[:4]}", "company_id": company_id},
+        )
+        assert product.status_code == 201, product.text
+        product_id = product.json()["data"]["id"]
+        micron = await client.post(
+            "/api/v1/inventory/microns",
+            headers=headers,
+            json={"product_id": product_id, "name": f"12 MIC {label}"},
+        )
+        assert micron.status_code == 201, micron.text
+        material = await client.post(
+            "/api/v1/inventory/material-subcategories",
+            headers=headers,
+            json={"parent_id": micron.json()["data"]["id"], "size": "300", "size_unit_id": mm_unit_id},
+        )
+        assert material.status_code == 201, material.text
+        return material.json()["data"]["id"]
+
+    material_a = await seed_for_company(company_a, "A")
+    await seed_for_company(company_b, "B")
+
+    listed = await client.get(
+        "/api/v1/inventory/material-subcategories",
+        headers=headers,
+        params={"company_id": company_a, "page_size": 50},
+    )
+    assert listed.status_code == 200, listed.text
+    ids = {row["id"] for row in listed.json()["data"]}
+    assert material_a in ids
+    assert all(row["company_id"] == company_a for row in listed.json()["data"])
+
+
+async def test_material_history_ledger(client: AsyncClient) -> None:
+    email, password = await provision_admin()
+    headers = await login_headers(client, email, password)
+    company_id = await _create_company(client, headers)
+    mm_unit_id = await _unit_id_by_code(client, headers, "mm")
+
+    product = await client.post(
+        "/api/v1/inventory/material-categories",
+        headers=headers,
+        json={"name": f"Hist-{uuid4().hex[:6]}", "company_id": company_id},
+    )
+    assert product.status_code == 201, product.text
+    product_id = product.json()["data"]["id"]
+    company_name = product.json()["data"]["company_name"]
+
+    micron = await client.post(
+        "/api/v1/inventory/microns",
+        headers=headers,
+        json={"product_id": product_id, "name": "12 MIC", "price_per_unit": "95"},
+    )
+    assert micron.status_code == 201, micron.text
+    micron_id = micron.json()["data"]["id"]
+
+    material = await client.post(
+        "/api/v1/inventory/material-subcategories",
+        headers=headers,
+        json={
+            "parent_id": micron_id,
+            "size": "300",
+            "size_unit_id": mm_unit_id,
+            "opening_rolls": "10",
+            "opening_kg": "100",
+        },
+    )
+    assert material.status_code == 201, material.text
+    material_id = material.json()["data"]["id"]
+
+    patch = await client.patch(
+        f"/api/v1/inventory/material-subcategories/{material_id}",
+        headers=headers,
+        json={"rolls_on_hand": "15"},
+    )
+    assert patch.status_code == 200, patch.text
+
+    history = await client.get(
+        f"/api/v1/inventory/material-subcategories/{material_id}/history",
+        headers=headers,
+        params={"page_size": 50},
+    )
+    assert history.status_code == 200, history.text
+    entries = history.json()["data"]
+    assert all(row["kind"] == "stock" for row in entries)
+    assert all(row["action"] in ("IN", "OUT") for row in entries)
+    roll_in = next(row for row in entries if row["action"] == "IN")
+    assert float(roll_in["rolls"]) == 5
+    assert roll_in["company_name"] == company_name
+    assert float(roll_in["price_per_unit"]) == 95
+
+    summary = await client.get(
+        f"/api/v1/inventory/material-subcategories/{material_id}/history-summary",
+        headers=headers,
+    )
+    assert summary.status_code == 200, summary.text
+    body = summary.json()["data"]
+    assert body["company_id"] == company_id
+    assert float(body["last_purchase_rolls"]) == 5
+    assert float(body["last_purchase_price"]) == 95
+
+
+async def test_material_update_combines_roll_and_kg_movement(client: AsyncClient) -> None:
+    email, password = await provision_admin()
+    headers = await login_headers(client, email, password)
+    company_id = await _create_company(client, headers)
+    mm_unit_id = await _unit_id_by_code(client, headers, "mm")
+
+    product = await client.post(
+        "/api/v1/inventory/material-categories",
+        headers=headers,
+        json={"name": f"Comb-{uuid4().hex[:6]}", "company_id": company_id},
+    )
+    assert product.status_code == 201, product.text
+    product_id = product.json()["data"]["id"]
+
+    micron = await client.post(
+        "/api/v1/inventory/microns",
+        headers=headers,
+        json={"product_id": product_id, "name": "25", "price_per_unit": "80"},
+    )
+    assert micron.status_code == 201, micron.text
+    micron_id = micron.json()["data"]["id"]
+
+    material = await client.post(
+        "/api/v1/inventory/material-subcategories",
+        headers=headers,
+        json={
+            "parent_id": micron_id,
+            "size": "740",
+            "size_unit_id": mm_unit_id,
+            "opening_rolls": "10",
+            "opening_kg": "2000",
+        },
+    )
+    assert material.status_code == 201, material.text
+    material_id = material.json()["data"]["id"]
+
+    patch = await client.patch(
+        f"/api/v1/inventory/material-subcategories/{material_id}",
+        headers=headers,
+        json={"rolls_on_hand": "8", "total_kg": "1660"},
+    )
+    assert patch.status_code == 200, patch.text
+
+    history = await client.get(
+        f"/api/v1/inventory/material-subcategories/{material_id}/history",
+        headers=headers,
+        params={"page_size": 50},
+    )
+    assert history.status_code == 200, history.text
+    stock_out = [row for row in history.json()["data"] if row["action"] == "OUT"]
+    assert len(stock_out) == 1
+    assert float(stock_out[0]["rolls"]) == 2
+    assert float(stock_out[0]["kilograms"]) == 340
+    assert stock_out[0]["note"] == "Stock updated from material"

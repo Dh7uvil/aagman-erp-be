@@ -48,6 +48,7 @@
     "inventory.job_image.update",
     "inventory.material.create",
     "inventory.material.delete",
+    "inventory.material.history",
     "inventory.material.read",
     "inventory.material.update",
     "inventory.material.view_price",
@@ -118,7 +119,8 @@
         "read",
         "update",
         "delete",
-        "view_price"
+        "view_price",
+        "history"
       ],
       "materials_report": [
         "read"

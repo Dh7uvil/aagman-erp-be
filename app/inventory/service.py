@@ -11,7 +11,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.common.schemas.filters import BaseFilter
 from app.common.schemas.pagination import PageParams
-from app.core.enums import MaterialCategoryKind, MaterialMovementDirection
+from app.common.services.audit import AuditWriter, audit_field_changes
+from app.core.enums import INVENTORY_MODULE, AuditAction, MaterialCategoryKind, MaterialMovementDirection
 from app.core.exceptions import (
     DuplicateResourceError,
     InsufficientStockError,
@@ -21,11 +22,14 @@ from app.core.exceptions import (
 )
 from app.core.permissions import has_permission
 from app.db.session import transaction
-from app.identity.models import User
+from app.identity.models import Company, User
 from app.inventory.catalog import MATERIAL_VIEW_PRICE
 from app.inventory.models import InventoryUnit, MaterialCategory, MaterialMovement
+from app.identity.schemas import AuditLogUserSummary
 from app.inventory.repository import (
     CategoryRepository,
+    CompanyLookupRepository,
+    MaterialHistoryRepository,
     MovementRepository,
     UnitLookupRepository,
     UnitRepository,
@@ -36,6 +40,8 @@ from app.inventory.schemas import (
     CategoryUpdate,
     DayReportRow,
     MaterialCreate,
+    MaterialHistoryEntry,
+    MaterialHistorySummary,
     MaterialResponse,
     MaterialUpdate,
     MicronCreate,
@@ -55,7 +61,10 @@ class InventoryService:
         self.units = UnitRepository(session)
         self.categories = CategoryRepository(session)
         self.unit_lookup = UnitLookupRepository(session)
+        self.companies = CompanyLookupRepository(session)
         self.movements = MovementRepository(session)
+        self.material_history_repo = MaterialHistoryRepository(session)
+        self.audit = AuditWriter(session)
 
     @staticmethod
     def _can_view_price(permissions: frozenset[str]) -> bool:
@@ -120,6 +129,47 @@ class InventoryService:
             raise ValidationError("Expected a material SKU")
         return row
 
+    async def _require_company(self, company_id: UUID) -> Company:
+        row = await self.session.get(Company, company_id)
+        if row is None or row.deleted_at is not None:
+            raise ValidationError("Company not found")
+        return row
+
+    async def _company_name_map(self, company_ids: list[UUID]) -> dict[UUID, str]:
+        rows = await self.companies.companies_by_ids(company_ids)
+        return {company_id: row.name for company_id, row in rows.items()}
+
+    async def _category_response(self, row: MaterialCategory) -> CategoryResponse:
+        company_name = ""
+        if row.company_id:
+            names = await self._company_name_map([row.company_id])
+            company_name = names.get(row.company_id, "")
+        return CategoryResponse(
+            id=row.id,
+            company_id=row.company_id,
+            company_name=company_name,
+            name=row.name,
+            is_active=row.is_active,
+            created_at=row.created_at,
+            updated_at=row.updated_at,
+        )
+
+    async def _category_responses(self, rows: list[MaterialCategory]) -> list[CategoryResponse]:
+        company_ids = [row.company_id for row in rows if row.company_id]
+        names = await self._company_name_map(company_ids)
+        return [
+            CategoryResponse(
+                id=row.id,
+                company_id=row.company_id,
+                company_name=names.get(row.company_id, "") if row.company_id else "",
+                name=row.name,
+                is_active=row.is_active,
+                created_at=row.created_at,
+                updated_at=row.updated_at,
+            )
+            for row in rows
+        ]
+
     async def _sku_hierarchy(
         self,
         sku: MaterialCategory,
@@ -159,6 +209,10 @@ class InventoryService:
         can_view_price: bool,
     ) -> MicronResponse:
         product = await self.categories.get(row.parent_id) if row.parent_id else None
+        company_name = ""
+        if product and product.company_id:
+            names = await self._company_name_map([product.company_id])
+            company_name = names.get(product.company_id, "")
         price_unit_code = ""
         if row.price_unit_id:
             units = await self.unit_lookup.get_units_by_ids([row.price_unit_id])
@@ -168,6 +222,8 @@ class InventoryService:
             id=row.id,
             product_id=row.parent_id or row.id,
             product_name=product.name if product else "",
+            company_id=product.company_id if product else None,
+            company_name=company_name,
             name=row.name,
             price_per_unit=self._display_decimal(row.price_per_unit),
             price_unit_id=row.price_unit_id,
@@ -186,16 +242,21 @@ class InventoryService:
     ) -> list[MicronResponse]:
         product_ids = [row.parent_id for row in rows if row.parent_id]
         products = await self.categories.get_by_ids(product_ids)
+        company_ids = [p.company_id for p in products.values() if p.company_id]
+        company_names = await self._company_name_map(company_ids)
         price_unit_ids = [row.price_unit_id for row in rows if row.price_unit_id]
         units = await self.unit_lookup.get_units_by_ids(price_unit_ids)
         result: list[MicronResponse] = []
         for row in rows:
             product = products.get(row.parent_id) if row.parent_id else None
             price_unit = units.get(row.price_unit_id) if row.price_unit_id else None
+            product_company_id = product.company_id if product else None
             response = MicronResponse(
                 id=row.id,
                 product_id=row.parent_id or row.id,
                 product_name=product.name if product else "",
+                company_id=product_company_id,
+                company_name=company_names.get(product_company_id, "") if product_company_id else "",
                 name=row.name,
                 price_per_unit=self._display_decimal(row.price_per_unit),
                 price_unit_id=row.price_unit_id,
@@ -223,8 +284,15 @@ class InventoryService:
         price_unit = units.get(micron.price_unit_id) if micron and micron.price_unit_id else None
         size_val = self._display_decimal(row.size or Decimal("0")) or Decimal("0")
         size_code = size_unit.code if size_unit else ""
+        company_id = product.company_id if product else None
+        company_name = ""
+        if company_id:
+            names = await self._company_name_map([company_id])
+            company_name = names.get(company_id, "")
         response = MaterialResponse(
             id=row.id,
+            company_id=company_id,
+            company_name=company_name,
             product_id=product.id if product else row.id,
             product_name=product.name if product else "",
             micron_id=micron.id if micron else row.id,
@@ -258,6 +326,8 @@ class InventoryService:
         microns = await self.categories.get_by_ids(micron_ids)
         product_ids = [m.parent_id for m in microns.values() if m.parent_id]
         products = await self.categories.get_by_ids(product_ids)
+        company_ids = [p.company_id for p in products.values() if p.company_id]
+        company_names = await self._company_name_map(company_ids)
         unit_ids: list[UUID] = []
         for row in rows:
             if row.unit_id:
@@ -277,8 +347,11 @@ class InventoryService:
             price_unit = units.get(micron.price_unit_id) if micron and micron.price_unit_id else None
             size_code = size_unit.code if size_unit else ""
             size_val = self._display_decimal(row.size or Decimal("0")) or Decimal("0")
+            company_id = product.company_id if product else None
             response = MaterialResponse(
                 id=row.id,
+                company_id=company_id,
+                company_name=company_names.get(company_id, "") if company_id else "",
                 product_id=product.id if product else row.id,
                 product_name=product.name if product else "",
                 micron_id=micron.id if micron else row.id,
@@ -319,6 +392,14 @@ class InventoryService:
         if direction == MaterialMovementDirection.OUT:
             return -rolls, -kg
         return rolls, kg
+
+    async def _movement_snapshot_fields(self, sku: MaterialCategory) -> dict[str, object]:
+        micron, product = await self._sku_hierarchy(sku)
+        return {
+            "company_id": product.company_id if product else None,
+            "price_per_unit": micron.price_per_unit if micron else None,
+            "price_unit_id": micron.price_unit_id if micron else None,
+        }
 
     async def _apply_movement_to_category(
         self,
@@ -402,10 +483,13 @@ class InventoryService:
         common_filter: BaseFilter | None = None,
         is_active: bool | None = None,
         roots_only: bool | None = True,
+        company_id: UUID | None = None,
     ) -> tuple[list[CategoryResponse], int]:
         filters: dict[str, object] = {}
         if is_active is not None:
             filters["is_active"] = is_active
+        if company_id is not None:
+            filters["company_id"] = company_id
         extra = self._product_criteria() if roots_only is not False else None
         rows, total = await self.categories.list(
             page=page,
@@ -413,13 +497,14 @@ class InventoryService:
             filters=filters or None,
             extra_criteria=extra,
         )
-        return [CategoryResponse.model_validate(row) for row in rows], total
+        return await self._category_responses(list(rows)), total
 
     async def get_category(self, category_id: UUID) -> CategoryResponse:
         row = await self._require_product(category_id)
-        return CategoryResponse.model_validate(row)
+        return await self._category_response(row)
 
     async def create_category(self, payload: CategoryCreate) -> CategoryResponse:
+        await self._require_company(payload.company_id)
         async with transaction(self.session):
             try:
                 row = await self.categories.create(
@@ -427,24 +512,31 @@ class InventoryService:
                         "name": payload.name,
                         "is_active": payload.is_active,
                         "parent_id": None,
+                        "company_id": payload.company_id,
                         "category_kind": MaterialCategoryKind.PRODUCT.value,
                     },
                 )
             except IntegrityError as exc:
-                raise DuplicateResourceError("A product with this name already exists") from exc
-            return CategoryResponse.model_validate(row)
+                raise DuplicateResourceError(
+                    "A product with this name already exists for this company",
+                ) from exc
+            return await self._category_response(row)
 
     async def update_category(self, category_id: UUID, payload: CategoryUpdate) -> CategoryResponse:
         await self._require_product(category_id)
         values = payload.model_dump(exclude_unset=True)
+        if payload.company_id is not None:
+            await self._require_company(payload.company_id)
         async with transaction(self.session):
             try:
                 updated = await self.categories.update(category_id, values)
             except IntegrityError as exc:
-                raise DuplicateResourceError("A product with this name already exists") from exc
+                raise DuplicateResourceError(
+                    "A product with this name already exists for this company",
+                ) from exc
             if updated is None:
                 raise ResourceNotFoundError("Product not found")
-            return CategoryResponse.model_validate(updated)
+            return await self._category_response(updated)
 
     async def delete_category(self, category_id: UUID) -> CategoryResponse:
         await self._require_product(category_id)
@@ -458,7 +550,7 @@ class InventoryService:
             deleted = await self.categories.soft_delete(category_id)
             if deleted is None:
                 raise ResourceNotFoundError("Product not found")
-            return CategoryResponse.model_validate(deleted)
+            return await self._category_response(deleted)
 
     # Microns
 
@@ -575,6 +667,7 @@ class InventoryService:
         rolls: Decimal | None = None,
         kg_lt: Decimal | None = None,
         kg_gt: Decimal | None = None,
+        company_id: UUID | None = None,
         permissions: frozenset[str],
     ) -> tuple[list[MaterialResponse], int]:
         filters: dict[str, object] = {}
@@ -591,11 +684,25 @@ class InventoryService:
             extra.append(MaterialCategory.total_kg < kg_lt)
         if kg_gt is not None:
             extra.append(MaterialCategory.total_kg > kg_gt)
+        micron_ids_filter: list[UUID] | None = None
+        if company_id is not None:
+            product_ids = await self.categories.product_ids_for_company(company_id)
+            if not product_ids:
+                return [], 0
+            micron_ids_filter = await self.categories.micron_ids_for_products(product_ids)
+            if not micron_ids_filter:
+                return [], 0
         if product_id is not None:
             micron_ids = await self.categories.micron_ids_for_product(product_id)
             if not micron_ids:
                 return [], 0
+            if micron_ids_filter is not None:
+                micron_ids = [mid for mid in micron_ids if mid in micron_ids_filter]
+                if not micron_ids:
+                    return [], 0
             extra.append(MaterialCategory.parent_id.in_(micron_ids))
+        elif micron_ids_filter is not None:
+            extra.append(MaterialCategory.parent_id.in_(micron_ids_filter))
         rows, total = await self.categories.list(
             page=page,
             common_filter=common_filter,
@@ -650,6 +757,7 @@ class InventoryService:
                 ) from exc
 
             if payload.opening_rolls > 0 or payload.opening_kg > 0:
+                snapshot = await self._movement_snapshot_fields(row)
                 await self.movements.create(
                     {
                         "category_id": row.id,
@@ -659,8 +767,18 @@ class InventoryService:
                         "kilograms": payload.opening_kg,
                         "note": "Opening balance",
                         "created_by": actor_user_id,
+                        **snapshot,
                     },
                 )
+
+            await self.audit.write(
+                user_id=actor_user_id,
+                action=AuditAction.CREATE,
+                module=INVENTORY_MODULE,
+                entity_type="material",
+                entity_id=row.id,
+                new_values=await self._material_snapshot(row),
+            )
 
             return await self._material_response(row, can_view_price=can_view_price)
 
@@ -684,63 +802,80 @@ class InventoryService:
             await self._require_unit(payload.size_unit_id)
 
         sku = await self._require_sku(material_id)
+        old_snapshot = await self._material_snapshot(sku)
 
         async with transaction(self.session):
-            if rolls_target is not None:
-                current_rolls = sku.rolls_on_hand or Decimal("0")
-                delta = rolls_target - current_rolls
-                if delta != 0:
-                    if delta > 0:
-                        direction = MaterialMovementDirection.IN
-                        movement_rolls = delta
-                    else:
-                        direction = MaterialMovementDirection.OUT
-                        movement_rolls = -delta
-                    await self._apply_movement_to_category(
-                        sku,
-                        direction,
+            current_rolls = sku.rolls_on_hand or Decimal("0")
+            current_kg = sku.total_kg or Decimal("0")
+            rolls_delta = (rolls_target - current_rolls) if rolls_target is not None else Decimal("0")
+            kg_delta = (kg_target - current_kg) if kg_target is not None else Decimal("0")
+
+            rolls_dir: MaterialMovementDirection | None = None
+            movement_rolls = Decimal("0")
+            if rolls_target is not None and rolls_delta != 0:
+                rolls_dir = (
+                    MaterialMovementDirection.IN if rolls_delta > 0 else MaterialMovementDirection.OUT
+                )
+                movement_rolls = abs(rolls_delta)
+
+            kg_dir: MaterialMovementDirection | None = None
+            movement_kg = Decimal("0")
+            if kg_target is not None and kg_delta != 0:
+                kg_dir = MaterialMovementDirection.IN if kg_delta > 0 else MaterialMovementDirection.OUT
+                movement_kg = abs(kg_delta)
+
+            async def record_stock_adjustment(
+                direction: MaterialMovementDirection,
+                adj_rolls: Decimal,
+                adj_kg: Decimal,
+                note: str,
+            ) -> None:
+                await self._apply_movement_to_category(sku, direction, adj_rolls, adj_kg)
+                movement_snapshot = await self._movement_snapshot_fields(sku)
+                await self.movements.create(
+                    {
+                        "category_id": material_id,
+                        "movement_date": date.today(),
+                        "direction": direction.value,
+                        "rolls": adj_rolls,
+                        "kilograms": adj_kg,
+                        "note": note,
+                        "created_by": actor_user_id,
+                        **movement_snapshot,
+                    },
+                )
+
+            if rolls_dir is not None and kg_dir is not None:
+                if rolls_dir == kg_dir:
+                    note = "Stock updated from material"
+                    await record_stock_adjustment(rolls_dir, movement_rolls, movement_kg, note)
+                else:
+                    await record_stock_adjustment(
+                        rolls_dir,
                         movement_rolls,
                         Decimal("0"),
+                        "Roll count updated from material",
                     )
-                    await self.movements.create(
-                        {
-                            "category_id": material_id,
-                            "movement_date": date.today(),
-                            "direction": direction.value,
-                            "rolls": movement_rolls,
-                            "kilograms": Decimal("0"),
-                            "note": "Roll count updated from material",
-                            "created_by": actor_user_id,
-                        },
-                    )
-
-            if kg_target is not None:
-                current_kg = sku.total_kg or Decimal("0")
-                delta_kg = kg_target - current_kg
-                if delta_kg != 0:
-                    if delta_kg > 0:
-                        direction = MaterialMovementDirection.IN
-                        movement_kg = delta_kg
-                    else:
-                        direction = MaterialMovementDirection.OUT
-                        movement_kg = -delta_kg
-                    await self._apply_movement_to_category(
-                        sku,
-                        direction,
+                    await record_stock_adjustment(
+                        kg_dir,
                         Decimal("0"),
                         movement_kg,
+                        "Quantity updated from material",
                     )
-                    await self.movements.create(
-                        {
-                            "category_id": material_id,
-                            "movement_date": date.today(),
-                            "direction": direction.value,
-                            "rolls": Decimal("0"),
-                            "kilograms": movement_kg,
-                            "note": "Quantity updated from material",
-                            "created_by": actor_user_id,
-                        },
-                    )
+            elif rolls_dir is not None:
+                await record_stock_adjustment(
+                    rolls_dir,
+                    movement_rolls,
+                    Decimal("0"),
+                    "Roll count updated from material",
+                )
+            elif kg_dir is not None:
+                await record_stock_adjustment(
+                    kg_dir,
+                    Decimal("0"),
+                    movement_kg,
+                    "Quantity updated from material",
+                )
 
             try:
                 updated = await self.categories.update(material_id, values)
@@ -750,15 +885,190 @@ class InventoryService:
                 ) from exc
             if updated is None:
                 raise ResourceNotFoundError("Material not found")
+            new_snapshot = await self._material_snapshot(updated)
+            if audit_field_changes(old_snapshot, new_snapshot):
+                await self.audit.write(
+                    user_id=actor_user_id,
+                    action=AuditAction.UPDATE,
+                    module=INVENTORY_MODULE,
+                    entity_type="material",
+                    entity_id=updated.id,
+                    old_values=old_snapshot,
+                    new_values=new_snapshot,
+                )
             return await self._material_response(updated, can_view_price=can_view_price)
 
-    async def delete_material(self, material_id: UUID, *, permissions: frozenset[str]) -> MaterialResponse:
-        await self._require_sku(material_id)
+    async def delete_material(
+        self,
+        material_id: UUID,
+        *,
+        actor_user_id: UUID,
+        permissions: frozenset[str],
+    ) -> MaterialResponse:
+        row = await self._require_sku(material_id)
+        old_snapshot = await self._material_snapshot(row)
         async with transaction(self.session):
             deleted = await self.categories.soft_delete(material_id)
             if deleted is None:
                 raise ResourceNotFoundError("Material not found")
+            await self.audit.write(
+                user_id=actor_user_id,
+                action=AuditAction.DELETE,
+                module=INVENTORY_MODULE,
+                entity_type="material",
+                entity_id=row.id,
+                old_values=old_snapshot,
+            )
             return await self._material_response(deleted, can_view_price=self._can_view_price(permissions))
+
+    async def _material_snapshot(self, row: MaterialCategory) -> dict[str, object]:
+        micron, product = await self._sku_hierarchy(row)
+        company_name = ""
+        if product and product.company_id:
+            names = await self._company_name_map([product.company_id])
+            company_name = names.get(product.company_id, "")
+        unit_code = ""
+        if row.unit_id:
+            units = await self.unit_lookup.get_units_by_ids([row.unit_id])
+            unit = units.get(row.unit_id)
+            unit_code = unit.code if unit else ""
+        size_code = ""
+        if row.size_unit_id:
+            units = await self.unit_lookup.get_units_by_ids([row.size_unit_id])
+            size_unit = units.get(row.size_unit_id)
+            size_code = size_unit.code if size_unit else ""
+        return {
+            "company_name": company_name,
+            "product_name": product.name if product else "",
+            "micron_name": micron.name if micron else "",
+            "size": str(row.size) if row.size is not None else "",
+            "size_unit_code": size_code,
+            "name": row.name,
+            "unit_code": unit_code,
+            "is_active": row.is_active,
+        }
+
+    async def _history_movement_context(
+        self,
+        sku: MaterialCategory,
+        movement: MaterialMovement,
+    ) -> tuple[UUID | None, str, Decimal | None, str | None]:
+        _micron, product = await self._sku_hierarchy(sku)
+        company_id = movement.company_id
+        if company_id is None and product:
+            company_id = product.company_id
+        company_name = ""
+        if company_id:
+            names = await self._company_name_map([company_id])
+            company_name = names.get(company_id, "")
+
+        # Use only values stored on the movement row. Current micron price must not
+        # rewrite historical purchase prices in the ledger.
+        price = movement.price_per_unit
+        price_unit_id = movement.price_unit_id
+        price_unit_code = ""
+        if price_unit_id:
+            units = await self.unit_lookup.get_units_by_ids([price_unit_id])
+            unit = units.get(price_unit_id)
+            price_unit_code = unit.code if unit else ""
+        return company_id, company_name, self._display_decimal(price), price_unit_code or None
+
+    async def material_history(
+        self,
+        material_id: UUID,
+        *,
+        page: PageParams,
+        permissions: frozenset[str],
+    ) -> tuple[list[MaterialHistoryEntry], int]:
+        sku = await self._require_sku(material_id)
+        can_view_price = self._can_view_price(permissions)
+        refs, total = await self.material_history_repo.list_entry_refs(material_id, page=page)
+        movement_ids = [entry_id for _kind, entry_id in refs]
+        movements = await self.material_history_repo.get_movements_by_ids(movement_ids)
+        user_ids = [
+            uid for uid in (movement.created_by for movement in movements.values()) if uid is not None
+        ]
+        users_by_id: dict[UUID, User] = {}
+        if user_ids:
+            unique_users = list(dict.fromkeys(user_ids))
+            for user_id in unique_users:
+                user = await self.session.get(User, user_id)
+                if user is not None:
+                    users_by_id[user_id] = user
+
+        entries: list[MaterialHistoryEntry] = []
+        for _kind, entry_id in refs:
+            movement = movements.get(entry_id)
+            if movement is None:
+                continue
+            company_id, company_name, price, price_code = await self._history_movement_context(
+                sku,
+                movement,
+            )
+            user = None
+            if movement.created_by and movement.created_by in users_by_id:
+                actor = users_by_id[movement.created_by]
+                user = AuditLogUserSummary(id=actor.id, name=actor.name)
+            entries.append(
+                MaterialHistoryEntry(
+                    id=movement.id,
+                    timestamp=movement.created_at,
+                    kind="stock",
+                    action=movement.direction,
+                    user=user,
+                    company_id=company_id,
+                    company_name=company_name,
+                    rolls=self._display_decimal(movement.rolls),
+                    kilograms=self._display_decimal(movement.kilograms),
+                    price_per_unit=price if can_view_price else None,
+                    price_unit_code=price_code if can_view_price else None,
+                    note=movement.note,
+                ),
+            )
+        return entries, total
+
+    async def material_history_summary(
+        self,
+        material_id: UUID,
+        *,
+        permissions: frozenset[str],
+    ) -> MaterialHistorySummary:
+        sku = await self._require_sku(material_id)
+        micron, product = await self._sku_hierarchy(sku)
+        company_id = product.company_id if product else None
+        company_name = ""
+        if company_id:
+            names = await self._company_name_map([company_id])
+            company_name = names.get(company_id, "")
+        size_code = ""
+        if sku.size_unit_id:
+            units = await self.unit_lookup.get_units_by_ids([sku.size_unit_id])
+            size_unit = units.get(sku.size_unit_id)
+            size_code = size_unit.code if size_unit else ""
+        size_val = self._display_decimal(sku.size or Decimal("0")) or Decimal("0")
+        can_view_price = self._can_view_price(permissions)
+        last = await self.movements.last_purchase_movement(material_id)
+        last_price: Decimal | None = None
+        last_price_code: str | None = None
+        last_date: date | None = None
+        last_rolls: Decimal | None = None
+        if last is not None:
+            _, _, last_price, last_price_code = await self._history_movement_context(sku, last)
+            last_date = last.movement_date
+            last_rolls = self._display_decimal(last.rolls)
+        return MaterialHistorySummary(
+            company_id=company_id,
+            company_name=company_name,
+            size_label=self._size_label(size_val, size_code),
+            product_name=product.name if product else "",
+            micron_name=micron.name if micron else "",
+            rolls_on_hand=self._display_decimal(sku.rolls_on_hand or Decimal("0")) or Decimal("0"),
+            total_kg=self._display_decimal(sku.total_kg or Decimal("0")) or Decimal("0"),
+            last_purchase_price=last_price if can_view_price else None,
+            last_purchase_price_unit_code=last_price_code if can_view_price else None,
+            last_purchase_date=last_date,
+            last_purchase_rolls=last_rolls,
+        )
 
     # Movements
 
@@ -817,12 +1127,37 @@ class InventoryService:
         payload: MovementCreate,
         *,
         actor_user_id: UUID,
+        permissions: frozenset[str],
     ) -> MovementResponse:
         if payload.rolls == 0 and payload.kilograms == 0:
             raise ValidationError("Enter at least one of rolls or kilograms")
 
+        can_view_price = self._can_view_price(permissions)
+        if (payload.price_per_unit is not None or payload.price_unit_id is not None) and not can_view_price:
+            raise ValidationError("You do not have permission to set purchase price")
+
         async with transaction(self.session):
             sku = await self._require_sku(payload.category_id)
+            micron, _product = await self._sku_hierarchy(sku)
+            movement_snapshot: dict[str, object]
+            if (
+                payload.direction == MaterialMovementDirection.IN
+                and payload.price_per_unit is not None
+                and can_view_price
+            ):
+                price_unit_id = payload.price_unit_id
+                if price_unit_id is None and micron is not None:
+                    price_unit_id = micron.price_unit_id
+                if price_unit_id is not None:
+                    await self._require_unit(price_unit_id)
+                movement_snapshot = {
+                    "company_id": _product.company_id if _product else None,
+                    "price_per_unit": payload.price_per_unit,
+                    "price_unit_id": price_unit_id,
+                }
+            else:
+                movement_snapshot = await self._movement_snapshot_fields(sku)
+
             await self._apply_movement_to_category(
                 sku,
                 payload.direction,
@@ -838,8 +1173,23 @@ class InventoryService:
                     "kilograms": payload.kilograms,
                     "note": payload.note,
                     "created_by": actor_user_id,
+                    **movement_snapshot,
                 },
             )
+            if (
+                payload.direction == MaterialMovementDirection.IN
+                and payload.price_per_unit is not None
+                and can_view_price
+                and micron is not None
+            ):
+                price_unit_id = movement_snapshot.get("price_unit_id")
+                await self.categories.update(
+                    micron.id,
+                    {
+                        "price_per_unit": payload.price_per_unit,
+                        "price_unit_id": price_unit_id,
+                    },
+                )
             return await self._movement_response(row)
 
     async def delete_movement(self, movement_id: UUID) -> MovementResponse:

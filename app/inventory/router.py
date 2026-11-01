@@ -15,6 +15,7 @@ from app.common.schemas.response import ApiResponse
 from app.inventory.catalog import (
     MATERIAL_CREATE,
     MATERIAL_DELETE,
+    MATERIAL_HISTORY,
     MATERIAL_READ,
     MATERIAL_UPDATE,
     MATERIALS_REPORT_READ,
@@ -32,6 +33,8 @@ from app.inventory.schemas import (
     DayReportRow,
     MaterialCreate,
     MaterialFilter,
+    MaterialHistoryEntry,
+    MaterialHistorySummary,
     MaterialResponse,
     MaterialUpdate,
     MicronCreate,
@@ -130,6 +133,7 @@ async def list_categories(
         common_filter=filters,
         is_active=filters.is_active,
         roots_only=filters.roots_only,
+        company_id=filters.company_id,
     )
     return paginated_response(rows, params=page, total=total)
 
@@ -268,6 +272,7 @@ async def list_materials(
         rolls=filters.rolls,
         kg_lt=filters.kg_lt,
         kg_gt=filters.kg_gt,
+        company_id=filters.company_id,
         permissions=current_user.permissions,
     )
     return paginated_response(rows, params=page, total=total)
@@ -290,6 +295,40 @@ async def create_material(
         permissions=current_user.permissions,
     )
     return ApiResponse(data=row, message="Material created successfully")
+
+
+@materials_router.get("/{material_id}/history", response_model=ApiResponse[list[MaterialHistoryEntry]])
+async def material_history(
+    material_id: UUID,
+    page: PaginationDependency,
+    current_user: CurrentUserDependency,
+    service: InventoryServiceDependency,
+    _: Annotated[CurrentUser, Depends(require_permission(MATERIAL_HISTORY))],
+) -> ApiResponse[list[MaterialHistoryEntry]]:
+    rows, total = await service.material_history(
+        material_id,
+        page=page,
+        permissions=current_user.permissions,
+    )
+    return paginated_response(rows, params=page, total=total)
+
+
+@materials_router.get(
+    "/{material_id}/history-summary",
+    response_model=ApiResponse[MaterialHistorySummary],
+)
+async def material_history_summary(
+    material_id: UUID,
+    current_user: CurrentUserDependency,
+    service: InventoryServiceDependency,
+    _: Annotated[CurrentUser, Depends(require_permission(MATERIAL_HISTORY))],
+) -> ApiResponse[MaterialHistorySummary]:
+    return ApiResponse(
+        data=await service.material_history_summary(
+            material_id,
+            permissions=current_user.permissions,
+        ),
+    )
 
 
 @materials_router.get("/{material_id}", response_model=ApiResponse[MaterialResponse])
@@ -328,7 +367,11 @@ async def delete_material(
     service: InventoryServiceDependency,
     _: Annotated[CurrentUser, Depends(require_permission(MATERIAL_DELETE))],
 ) -> ApiResponse[MaterialResponse]:
-    row = await service.delete_material(material_id, permissions=current_user.permissions)
+    row = await service.delete_material(
+        material_id,
+        actor_user_id=current_user.user_id,
+        permissions=current_user.permissions,
+    )
     return ApiResponse(data=row, message="Material deleted successfully")
 
 
@@ -373,7 +416,11 @@ async def create_movement(
     service: InventoryServiceDependency,
     _: Annotated[CurrentUser, Depends(require_permission(MATERIAL_UPDATE))],
 ) -> ApiResponse[MovementResponse]:
-    row = await service.create_movement(payload, actor_user_id=current_user.user_id)
+    row = await service.create_movement(
+        payload,
+        actor_user_id=current_user.user_id,
+        permissions=current_user.permissions,
+    )
     return ApiResponse(data=row, message="Movement recorded successfully")
 
 

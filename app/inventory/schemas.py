@@ -2,13 +2,14 @@
 
 from datetime import date, datetime
 from decimal import Decimal
-from typing import ClassVar
+from typing import ClassVar, Literal, Self
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from app.common.schemas.filters import BaseFilter
 from app.core.enums import MaterialMovementDirection
+from app.identity.schemas import AuditLogUserSummary
 
 
 def _decimal_non_negative(value: Decimal) -> Decimal:
@@ -47,12 +48,14 @@ class UnitFilter(BaseFilter):
 
 
 class CategoryCreate(BaseModel):
+    company_id: UUID
     name: str = Field(min_length=1, max_length=200)
     is_active: bool = True
 
 
 class CategoryUpdate(BaseModel):
     name: str | None = Field(default=None, max_length=200)
+    company_id: UUID | None = None
     is_active: bool | None = None
 
 
@@ -60,6 +63,8 @@ class CategoryResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
     id: UUID
+    company_id: UUID | None = None
+    company_name: str = ""
     name: str
     is_active: bool
     created_at: datetime
@@ -71,6 +76,7 @@ class CategoryFilter(BaseFilter):
 
     is_active: bool | None = None
     roots_only: bool | None = None
+    company_id: UUID | None = None
 
 
 class MicronCreate(BaseModel):
@@ -94,6 +100,8 @@ class MicronResponse(BaseModel):
     id: UUID
     product_id: UUID
     product_name: str
+    company_id: UUID | None = None
+    company_name: str = ""
     name: str
     price_per_unit: Decimal | None = None
     price_unit_id: UUID | None = None
@@ -160,6 +168,8 @@ class MaterialResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
     id: UUID
+    company_id: UUID | None = None
+    company_name: str = ""
     product_id: UUID
     product_name: str
     micron_id: UUID
@@ -187,6 +197,7 @@ class MaterialFilter(BaseFilter):
 
     parent_id: UUID | None = None
     product_id: UUID | None = None
+    company_id: UUID | None = None
     is_active: bool | None = None
     size: Decimal | None = None
     rolls: Decimal | None = None
@@ -208,6 +219,8 @@ class MovementCreate(BaseModel):
     rolls: Decimal
     kilograms: Decimal
     note: str | None = Field(default=None, max_length=2000)
+    price_per_unit: Decimal | None = None
+    price_unit_id: UUID | None = None
 
     @field_validator("direction")
     @classmethod
@@ -220,6 +233,20 @@ class MovementCreate(BaseModel):
     @classmethod
     def validate_qty_non_negative(cls, value: Decimal) -> Decimal:
         return _decimal_non_negative(value)
+
+    @field_validator("price_per_unit")
+    @classmethod
+    def validate_price_non_negative(cls, value: Decimal | None) -> Decimal | None:
+        if value is None:
+            return value
+        return _decimal_non_negative(value)
+
+    @model_validator(mode="after")
+    def validate_purchase_price_on_in_only(self) -> Self:
+        if self.price_per_unit is not None or self.price_unit_id is not None:
+            if self.direction != MaterialMovementDirection.IN:
+                raise ValueError("purchase price can only be set on incoming movements")
+        return self
 
 
 class MovementResponse(BaseModel):
@@ -245,6 +272,36 @@ class MovementResponse(BaseModel):
 class MovementFilter(BaseFilter):
     movement_date: date | None = None
     category_id: UUID | None = None
+
+
+class MaterialHistoryEntry(BaseModel):
+    id: UUID
+    timestamp: datetime
+    kind: Literal["stock", "edit"]
+    action: str
+    user: AuditLogUserSummary | None = None
+    company_id: UUID | None = None
+    company_name: str = ""
+    rolls: Decimal | None = None
+    kilograms: Decimal | None = None
+    price_per_unit: Decimal | None = None
+    price_unit_code: str | None = None
+    note: str | None = None
+    changes: list[dict[str, object]] = Field(default_factory=list)
+
+
+class MaterialHistorySummary(BaseModel):
+    company_id: UUID | None = None
+    company_name: str = ""
+    size_label: str
+    product_name: str
+    micron_name: str
+    rolls_on_hand: Decimal
+    total_kg: Decimal
+    last_purchase_price: Decimal | None = None
+    last_purchase_price_unit_code: str | None = None
+    last_purchase_date: date | None = None
+    last_purchase_rolls: Decimal | None = None
 
 
 class DayReportRow(BaseModel):

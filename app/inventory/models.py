@@ -42,11 +42,20 @@ class MaterialCategory(IsActiveMixin, SoftDeleteModel):
     __tablename__ = "material_categories"
     __table_args__ = (
         Index(
-            "uq_material_categories_product_name_active",
+            "uq_material_categories_product_company_name_active",
+            "company_id",
             "name",
             unique=True,
             postgresql_where=text(
-                "category_kind = 'product' AND parent_id IS NULL AND deleted_at IS NULL"
+                "category_kind = 'product' AND parent_id IS NULL AND company_id IS NOT NULL AND deleted_at IS NULL"
+            ),
+        ),
+        Index(
+            "uq_material_categories_product_name_nocompany_active",
+            "name",
+            unique=True,
+            postgresql_where=text(
+                "category_kind = 'product' AND parent_id IS NULL AND company_id IS NULL AND deleted_at IS NULL"
             ),
         ),
         Index(
@@ -69,6 +78,12 @@ class MaterialCategory(IsActiveMixin, SoftDeleteModel):
     parent_id: Mapped[UUID | None] = mapped_column(
         PostgreSQLUUID(as_uuid=True),
         ForeignKey("material_categories.id", ondelete="RESTRICT"),
+        nullable=True,
+        index=True,
+    )
+    company_id: Mapped[UUID | None] = mapped_column(
+        PostgreSQLUUID(as_uuid=True),
+        ForeignKey("companies.id", ondelete="RESTRICT"),
         nullable=True,
         index=True,
     )
@@ -122,6 +137,18 @@ class MaterialMovement(SoftDeleteModel):
     created_by: Mapped[UUID | None] = mapped_column(
         PostgreSQLUUID(as_uuid=True),
         ForeignKey("users.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    company_id: Mapped[UUID | None] = mapped_column(
+        PostgreSQLUUID(as_uuid=True),
+        ForeignKey("companies.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
+    price_per_unit: Mapped[Decimal | None] = mapped_column(Numeric(18, 4), nullable=True)
+    price_unit_id: Mapped[UUID | None] = mapped_column(
+        PostgreSQLUUID(as_uuid=True),
+        ForeignKey("inventory_units.id", ondelete="RESTRICT"),
         nullable=True,
     )
 

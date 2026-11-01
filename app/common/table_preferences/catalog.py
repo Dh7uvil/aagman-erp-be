@@ -105,6 +105,7 @@ TABLE_CATALOG: dict[str, TableCatalogEntry] = {
         TableCatalogEntry(
             table_key="inventory.materials",
             columns=(
+                TableColumnSpec("company"),
                 TableColumnSpec("product"),
                 TableColumnSpec("micron"),
                 TableColumnSpec("size"),
