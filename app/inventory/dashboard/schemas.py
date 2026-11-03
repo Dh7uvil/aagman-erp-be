@@ -15,48 +15,48 @@ class DashboardRange(BaseModel):
     date_to: date | None = None
 
 
-class JobStatusCount(BaseModel):
+class CylinderStatusCount(BaseModel):
     status: str
     count: int
 
 
-class JobActivityBucket(BaseModel):
+class CylinderActivityBucket(BaseModel):
     bucket_start: date
-    jobs_created: int
+    cylinders_created: int
     returns_created: int
 
 
-class TopCompanyJobs(BaseModel):
+class TopCompanyCylinders(BaseModel):
     company_id: str
     company_name: str
-    active_jobs: int
+    active_cylinders: int
     cylinder_count: int
 
 
-class OpenJobPause(BaseModel):
-    job_id: str
-    job_number: str
+class OpenCylinderPause(BaseModel):
+    cylinder_id: str
+    cylinder_number: str
     company_name: str
     paused_at: datetime
     days_paused: int
 
 
-class JobsDashboardKpis(BaseModel):
-    active_jobs: int
-    paused_jobs: int
+class CylindersDashboardKpis(BaseModel):
+    active_cylinders: int
+    paused_cylinders: int
     cylinders_in_circulation: int
     awaiting_return: int
     cylinder_cost_exposure: Decimal | None = None
 
 
-class JobsDashboard(BaseModel):
+class CylindersDashboard(BaseModel):
     date_from: date
     date_to: date
-    kpis: JobsDashboardKpis
-    status_breakdown: list[JobStatusCount]
-    activity_buckets: list[JobActivityBucket]
-    top_companies: list[TopCompanyJobs]
-    open_pauses: list[OpenJobPause] = Field(default_factory=list)
+    kpis: CylindersDashboardKpis
+    status_breakdown: list[CylinderStatusCount]
+    activity_buckets: list[CylinderActivityBucket]
+    top_companies: list[TopCompanyCylinders]
+    open_pauses: list[OpenCylinderPause] = Field(default_factory=list)
 
 
 class MovementActivityBucket(BaseModel):
@@ -84,12 +84,21 @@ class TopConsumedSku(BaseModel):
     out_kg: Decimal
 
 
+class DeadStockItem(BaseModel):
+    material_id: str
+    name: str
+    total_kg: Decimal
+    days_idle: int
+    last_activity_date: date
+
+
 class MaterialsDashboardKpis(BaseModel):
     active_skus: int
     total_kg_on_hand: Decimal
     out_of_stock_skus: int
     stock_value: Decimal | None = None
     valued_sku_count: int = 0
+    dead_stock_skus: int = 0
 
 
 class MaterialsDashboard(BaseModel):
@@ -100,3 +109,4 @@ class MaterialsDashboard(BaseModel):
     stock_by_product: list[StockByProduct]
     reorder_watchlist: list[ReorderWatchItem]
     top_consumed: list[TopConsumedSku]
+    dead_stock: list[DeadStockItem] = Field(default_factory=list)

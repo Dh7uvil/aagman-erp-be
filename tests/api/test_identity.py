@@ -408,10 +408,19 @@ async def test_company_crud_duplicate_name_and_permission(client: AsyncClient) -
     updated = await client.patch(
         f"/api/v1/companies/{company_id}",
         headers=admin_headers,
-        json={"phone": "+1-555-0199"},
+        json={"phone": "+1-555-0199", "gst_number": "22aaaaa0000a1z5"},
     )
     assert updated.status_code == 200
     assert updated.json()["data"]["phone"] == "+1-555-0199"
+    assert updated.json()["data"]["gst_number"] == "22AAAAA0000A1Z5"
+
+    no_gst = await client.post(
+        "/api/v1/companies",
+        headers=admin_headers,
+        json={"name": f"NoGst-{uuid4().hex[:6]}"},
+    )
+    assert no_gst.status_code == 201, no_gst.text
+    assert no_gst.json()["data"]["gst_number"] is None
 
     deleted = await client.delete(f"/api/v1/companies/{company_id}", headers=admin_headers)
     assert deleted.status_code == 200

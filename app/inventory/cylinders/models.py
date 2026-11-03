@@ -8,25 +8,25 @@ from sqlalchemy import BigInteger, DateTime, ForeignKey, Index, Integer, Numeric
 from sqlalchemy.dialects.postgresql import UUID as PostgreSQLUUID
 from sqlalchemy.orm import Mapped, mapped_column
 
-from app.core.enums import JobStatus
+from app.core.enums import CylinderStatus
 from app.db.base import SoftDeleteModel, TimestampedModel
 from app.db.mixins import AuditUserMixin
 
 
-class Job(AuditUserMixin, SoftDeleteModel):
-    __tablename__ = "jobs"
+class Cylinder(AuditUserMixin, SoftDeleteModel):
+    __tablename__ = "cylinders"
     __table_args__ = (
         Index(
-            "uq_jobs_job_number_active",
-            "job_number",
+            "uq_cylinders_cylinder_number_active",
+            "cylinder_number",
             unique=True,
             postgresql_where=text("deleted_at IS NULL"),
         ),
-        Index("ix_jobs_company_id", "company_id"),
-        Index("ix_jobs_status", "status"),
+        Index("ix_cylinders_company_id", "company_id"),
+        Index("ix_cylinders_status", "status"),
     )
 
-    job_number: Mapped[str] = mapped_column(String(30), nullable=False)
+    cylinder_number: Mapped[str] = mapped_column(String(30), nullable=False)
     company_id: Mapped[UUID] = mapped_column(
         PostgreSQLUUID(as_uuid=True),
         ForeignKey("companies.id", ondelete="RESTRICT"),
@@ -45,10 +45,10 @@ class Job(AuditUserMixin, SoftDeleteModel):
         server_default=text("'ACTIVE'"),
     )
 
-    job_image_storage_key: Mapped[str | None] = mapped_column(String(500), nullable=True)
-    job_image_filename: Mapped[str | None] = mapped_column(String(255), nullable=True)
-    job_image_content_type: Mapped[str | None] = mapped_column(String(150), nullable=True)
-    job_image_size_bytes: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    cylinder_image_storage_key: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    cylinder_image_filename: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    cylinder_image_content_type: Mapped[str | None] = mapped_column(String(150), nullable=True)
+    cylinder_image_size_bytes: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
 
     challan_storage_key: Mapped[str | None] = mapped_column(String(500), nullable=True)
     challan_filename: Mapped[str | None] = mapped_column(String(255), nullable=True)
@@ -56,24 +56,24 @@ class Job(AuditUserMixin, SoftDeleteModel):
     challan_size_bytes: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
 
     @property
-    def status_enum(self) -> JobStatus:
-        return JobStatus(self.status)
+    def status_enum(self) -> CylinderStatus:
+        return CylinderStatus(self.status)
 
 
-class JobCylinder(TimestampedModel):
-    __tablename__ = "job_cylinders"
+class CylinderSize(TimestampedModel):
+    __tablename__ = "cylinder_sizes"
     __table_args__ = (
         Index(
-            "uq_job_cylinders_job_position",
-            "job_id",
+            "uq_cylinder_sizes_cylinder_position",
+            "cylinder_id",
             "position",
             unique=True,
         ),
     )
 
-    job_id: Mapped[UUID] = mapped_column(
+    cylinder_id: Mapped[UUID] = mapped_column(
         PostgreSQLUUID(as_uuid=True),
-        ForeignKey("jobs.id", ondelete="CASCADE"),
+        ForeignKey("cylinders.id", ondelete="CASCADE"),
         nullable=False,
     )
     position: Mapped[int] = mapped_column(Integer, nullable=False)
@@ -81,40 +81,40 @@ class JobCylinder(TimestampedModel):
     circumference: Mapped[Decimal] = mapped_column(Numeric(12, 3), nullable=False)
 
 
-class JobColor(TimestampedModel):
-    __tablename__ = "job_colors"
+class CylinderColor(TimestampedModel):
+    __tablename__ = "cylinder_colors"
     __table_args__ = (
         Index(
-            "uq_job_colors_job_position",
-            "job_id",
+            "uq_cylinder_colors_cylinder_position",
+            "cylinder_id",
             "position",
             unique=True,
         ),
     )
 
-    job_id: Mapped[UUID] = mapped_column(
+    cylinder_id: Mapped[UUID] = mapped_column(
         PostgreSQLUUID(as_uuid=True),
-        ForeignKey("jobs.id", ondelete="CASCADE"),
+        ForeignKey("cylinders.id", ondelete="CASCADE"),
         nullable=False,
     )
     position: Mapped[int] = mapped_column(Integer, nullable=False)
     name: Mapped[str] = mapped_column(String(100), nullable=False)
 
 
-class JobPause(TimestampedModel):
-    __tablename__ = "job_pauses"
+class CylinderPause(TimestampedModel):
+    __tablename__ = "cylinder_pauses"
     __table_args__ = (
         Index(
-            "uq_job_pauses_open",
-            "job_id",
+            "uq_cylinder_pauses_open",
+            "cylinder_id",
             unique=True,
             postgresql_where=text("resumed_at IS NULL"),
         ),
     )
 
-    job_id: Mapped[UUID] = mapped_column(
+    cylinder_id: Mapped[UUID] = mapped_column(
         PostgreSQLUUID(as_uuid=True),
-        ForeignKey("jobs.id", ondelete="CASCADE"),
+        ForeignKey("cylinders.id", ondelete="CASCADE"),
         nullable=False,
     )
     paused_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
@@ -143,17 +143,17 @@ class CylinderReturn(AuditUserMixin, SoftDeleteModel):
             postgresql_where=text("deleted_at IS NULL"),
         ),
         Index(
-            "uq_cylinder_returns_job_active",
-            "job_id",
+            "uq_cylinder_returns_cylinder_active",
+            "cylinder_id",
             unique=True,
             postgresql_where=text("deleted_at IS NULL"),
         ),
     )
 
     return_number: Mapped[str] = mapped_column(String(30), nullable=False)
-    job_id: Mapped[UUID] = mapped_column(
+    cylinder_id: Mapped[UUID] = mapped_column(
         PostgreSQLUUID(as_uuid=True),
-        ForeignKey("jobs.id", ondelete="RESTRICT"),
+        ForeignKey("cylinders.id", ondelete="RESTRICT"),
         nullable=False,
     )
     company_id: Mapped[UUID] = mapped_column(

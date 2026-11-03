@@ -68,6 +68,7 @@ class CompanyService:
                         "name": payload.name,
                         "email": payload.email,
                         "phone": payload.phone,
+                        "gst_number": payload.gst_number,
                         "address_id": address_id,
                         "bill_to_address_id": bill_to_address_id,
                         "ship_to_address_id": ship_to_address_id,
@@ -181,6 +182,7 @@ class CompanyService:
             "name": row.name,
             "email": row.email,
             "phone": row.phone,
+            "gst_number": row.gst_number,
         }
         for key, address_id in (
             ("address", row.address_id),
@@ -213,6 +215,7 @@ class CompanyService:
                     name=row.name,
                     email=row.email,
                     phone=row.phone,
+                    gst_number=row.gst_number,
                     address=resolve(row.address_id),
                     bill_to_address=resolve(row.bill_to_address_id),
                     ship_to_address=resolve(row.ship_to_address_id),

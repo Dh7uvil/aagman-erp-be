@@ -56,7 +56,7 @@ materials_router = APIRouter(prefix="/material-subcategories", tags=["Materials"
 movements_router = APIRouter(prefix="/material-movements", tags=["Material Movements"])
 
 from app.inventory.dashboard.router import dashboard_router
-from app.inventory.jobs.router import jobs_router, returns_router
+from app.inventory.cylinders.router import cylinders_router, returns_router
 
 router = APIRouter(prefix="/inventory", tags=["Inventory"])
 router.include_router(units_router)
@@ -64,7 +64,7 @@ router.include_router(categories_router)
 router.include_router(microns_router)
 router.include_router(materials_router)
 router.include_router(movements_router)
-router.include_router(jobs_router)
+router.include_router(cylinders_router)
 router.include_router(returns_router)
 router.include_router(dashboard_router)
 

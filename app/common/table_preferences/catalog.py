@@ -155,9 +155,9 @@ TABLE_CATALOG: dict[str, TableCatalogEntry] = {
             ),
         ),
         TableCatalogEntry(
-            table_key="inventory.jobs",
+            table_key="inventory.cylinders",
             columns=(
-                TableColumnSpec("job_number"),
+                TableColumnSpec("cylinder_number"),
                 TableColumnSpec("company"),
                 TableColumnSpec("product"),
                 TableColumnSpec("status"),
@@ -167,7 +167,7 @@ TABLE_CATALOG: dict[str, TableCatalogEntry] = {
                 TableColumnSpec(
                     "cylinder_cost",
                     default_visible=False,
-                    required_permission="inventory.job.view_price",
+                    required_permission="inventory.cylinder.view_price",
                 ),
                 TableColumnSpec("created_at", default_visible=False),
                 TableColumnSpec("updated_at", default_visible=False),
@@ -175,7 +175,7 @@ TABLE_CATALOG: dict[str, TableCatalogEntry] = {
         ),
         _entry(
             "inventory.cylinder_returns",
-            ("return_number", "customer", "job", "remarks"),
+            ("return_number", "customer", "return_date", "cylinder", "remarks"),
             *_hidden("created_at", "updated_at"),
         ),
     )

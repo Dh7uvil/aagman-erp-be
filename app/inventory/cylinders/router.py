@@ -20,29 +20,29 @@ from app.inventory.catalog import (
     CYLINDER_RETURN_DELETE,
     CYLINDER_RETURN_READ,
     CYLINDER_RETURN_UPDATE,
-    JOB_CREATE,
-    JOB_DELETE,
-    JOB_HISTORY,
-    JOB_READ,
-    JOB_UPDATE,
+    CYLINDER_CREATE,
+    CYLINDER_DELETE,
+    CYLINDER_HISTORY,
+    CYLINDER_READ,
+    CYLINDER_UPDATE,
 )
-from app.inventory.jobs.dependencies import CylinderReturnServiceDependency, JobServiceDependency
-from app.inventory.jobs.schemas import (
-    JOB_FILE_SLOTS,
+from app.inventory.cylinders.dependencies import CylinderReturnServiceDependency, CylinderServiceDependency
+from app.inventory.cylinders.schemas import (
+    CYLINDER_FILE_SLOTS,
     CylinderReturnCreate,
     CylinderReturnFilter,
     CylinderReturnResponse,
     CylinderReturnUpdate,
-    JobCreate,
-    JobFilter,
-    JobListItem,
-    JobPauseRequest,
-    JobResponse,
-    JobResumeRequest,
-    JobUpdate,
+    CylinderCreate,
+    CylinderFilter,
+    CylinderListItem,
+    CylinderPauseRequest,
+    CylinderResponse,
+    CylinderResumeRequest,
+    CylinderUpdate,
 )
 
-jobs_router = APIRouter(prefix="/jobs", tags=["Jobs"])
+cylinders_router = APIRouter(prefix="/cylinders", tags=["Cylinders"])
 returns_router = APIRouter(prefix="/cylinder-returns", tags=["Cylinder Returns"])
 
 _READ_CHUNK_SIZE = 64 * 1024
@@ -65,15 +65,15 @@ async def _read_upload(file: UploadFile, *, max_bytes: int) -> bytes:
     return b"".join(chunks)
 
 
-@jobs_router.get("", response_model=ApiResponse[list[JobListItem]])
-async def list_jobs(
+@cylinders_router.get("", response_model=ApiResponse[list[CylinderListItem]])
+async def list_cylinders(
     page: PaginationDependency,
-    service: JobServiceDependency,
-    filters: Annotated[JobFilter, Depends()],
+    service: CylinderServiceDependency,
+    filters: Annotated[CylinderFilter, Depends()],
     current_user: CurrentUserDependency,
-    _: Annotated[CurrentUser, Depends(require_permission(JOB_READ))],
-) -> ApiResponse[list[JobListItem]]:
-    rows, total = await service.list_jobs(
+    _: Annotated[CurrentUser, Depends(require_permission(CYLINDER_READ))],
+) -> ApiResponse[list[CylinderListItem]]:
+    rows, total = await service.list_cylinders(
         page=page,
         common_filter=filters,
         status=filters.status,
@@ -84,113 +84,113 @@ async def list_jobs(
     return paginated_response(rows, params=page, total=total)
 
 
-@jobs_router.post("", response_model=ApiResponse[JobResponse], status_code=status.HTTP_201_CREATED)
-async def create_job(
-    payload: JobCreate,
+@cylinders_router.post("", response_model=ApiResponse[CylinderResponse], status_code=status.HTTP_201_CREATED)
+async def create_cylinder(
+    payload: CylinderCreate,
     current_user: CurrentUserDependency,
-    service: JobServiceDependency,
-    _: Annotated[CurrentUser, Depends(require_permission(JOB_CREATE))],
-) -> ApiResponse[JobResponse]:
-    row = await service.create_job(
+    service: CylinderServiceDependency,
+    _: Annotated[CurrentUser, Depends(require_permission(CYLINDER_CREATE))],
+) -> ApiResponse[CylinderResponse]:
+    row = await service.create_cylinder(
         payload,
         actor_user_id=current_user.user_id,
         permissions=current_user.permissions,
     )
-    return ApiResponse(data=row, message="Job created successfully")
+    return ApiResponse(data=row, message="Cylinder created successfully")
 
 
-@jobs_router.get("/{job_id}", response_model=ApiResponse[JobResponse])
-async def get_job(
-    job_id: UUID,
+@cylinders_router.get("/{cylinder_id}", response_model=ApiResponse[CylinderResponse])
+async def get_cylinder(
+    cylinder_id: UUID,
     current_user: CurrentUserDependency,
-    service: JobServiceDependency,
-    _: Annotated[CurrentUser, Depends(require_permission(JOB_READ))],
-) -> ApiResponse[JobResponse]:
-    return ApiResponse(data=await service.get_job(job_id, permissions=current_user.permissions))
+    service: CylinderServiceDependency,
+    _: Annotated[CurrentUser, Depends(require_permission(CYLINDER_READ))],
+) -> ApiResponse[CylinderResponse]:
+    return ApiResponse(data=await service.get_cylinder(cylinder_id, permissions=current_user.permissions))
 
 
-@jobs_router.patch("/{job_id}", response_model=ApiResponse[JobResponse])
-async def update_job(
-    job_id: UUID,
-    payload: JobUpdate,
+@cylinders_router.patch("/{cylinder_id}", response_model=ApiResponse[CylinderResponse])
+async def update_cylinder(
+    cylinder_id: UUID,
+    payload: CylinderUpdate,
     current_user: CurrentUserDependency,
-    service: JobServiceDependency,
-    _: Annotated[CurrentUser, Depends(require_permission(JOB_UPDATE))],
-) -> ApiResponse[JobResponse]:
-    row = await service.update_job(
-        job_id,
+    service: CylinderServiceDependency,
+    _: Annotated[CurrentUser, Depends(require_permission(CYLINDER_UPDATE))],
+) -> ApiResponse[CylinderResponse]:
+    row = await service.update_cylinder(
+        cylinder_id,
         payload,
         actor_user_id=current_user.user_id,
         permissions=current_user.permissions,
     )
-    return ApiResponse(data=row, message="Job updated successfully")
+    return ApiResponse(data=row, message="Cylinder updated successfully")
 
 
-@jobs_router.delete("/{job_id}", response_model=ApiResponse[JobResponse])
-async def delete_job(
-    job_id: UUID,
+@cylinders_router.delete("/{cylinder_id}", response_model=ApiResponse[CylinderResponse])
+async def delete_cylinder(
+    cylinder_id: UUID,
     current_user: CurrentUserDependency,
-    service: JobServiceDependency,
-    _: Annotated[CurrentUser, Depends(require_permission(JOB_DELETE))],
-) -> ApiResponse[JobResponse]:
-    row = await service.delete_job(job_id, actor_user_id=current_user.user_id)
-    return ApiResponse(data=row, message="Job deleted successfully")
+    service: CylinderServiceDependency,
+    _: Annotated[CurrentUser, Depends(require_permission(CYLINDER_DELETE))],
+) -> ApiResponse[CylinderResponse]:
+    row = await service.delete_cylinder(cylinder_id, actor_user_id=current_user.user_id)
+    return ApiResponse(data=row, message="Cylinder deleted successfully")
 
 
-@jobs_router.post("/{job_id}/pause", response_model=ApiResponse[JobResponse])
-async def pause_job(
-    job_id: UUID,
-    payload: JobPauseRequest,
+@cylinders_router.post("/{cylinder_id}/pause", response_model=ApiResponse[CylinderResponse])
+async def pause_cylinder(
+    cylinder_id: UUID,
+    payload: CylinderPauseRequest,
     current_user: CurrentUserDependency,
-    service: JobServiceDependency,
-    _: Annotated[CurrentUser, Depends(require_permission(JOB_UPDATE))],
-) -> ApiResponse[JobResponse]:
-    row = await service.pause_job(
-        job_id,
+    service: CylinderServiceDependency,
+    _: Annotated[CurrentUser, Depends(require_permission(CYLINDER_UPDATE))],
+) -> ApiResponse[CylinderResponse]:
+    row = await service.pause_cylinder(
+        cylinder_id,
         payload,
         actor_user_id=current_user.user_id,
         permissions=current_user.permissions,
     )
-    return ApiResponse(data=row, message="Job paused")
+    return ApiResponse(data=row, message="Cylinder paused")
 
 
-@jobs_router.post("/{job_id}/resume", response_model=ApiResponse[JobResponse])
-async def resume_job(
-    job_id: UUID,
-    payload: JobResumeRequest,
+@cylinders_router.post("/{cylinder_id}/resume", response_model=ApiResponse[CylinderResponse])
+async def resume_cylinder(
+    cylinder_id: UUID,
+    payload: CylinderResumeRequest,
     current_user: CurrentUserDependency,
-    service: JobServiceDependency,
-    _: Annotated[CurrentUser, Depends(require_permission(JOB_UPDATE))],
-) -> ApiResponse[JobResponse]:
-    row = await service.resume_job(
-        job_id,
+    service: CylinderServiceDependency,
+    _: Annotated[CurrentUser, Depends(require_permission(CYLINDER_UPDATE))],
+) -> ApiResponse[CylinderResponse]:
+    row = await service.resume_cylinder(
+        cylinder_id,
         payload,
         actor_user_id=current_user.user_id,
         permissions=current_user.permissions,
     )
-    return ApiResponse(data=row, message="Job resumed")
+    return ApiResponse(data=row, message="Cylinder resumed")
 
 
-@jobs_router.get("/{job_id}/history", response_model=ApiResponse[list[EntityHistoryEntry]])
-async def job_history(
-    job_id: UUID,
+@cylinders_router.get("/{cylinder_id}/history", response_model=ApiResponse[list[EntityHistoryEntry]])
+async def cylinder_history(
+    cylinder_id: UUID,
     page: PaginationDependency,
-    service: JobServiceDependency,
-    _: Annotated[CurrentUser, Depends(require_permission(JOB_HISTORY))],
+    service: CylinderServiceDependency,
+    _: Annotated[CurrentUser, Depends(require_permission(CYLINDER_HISTORY))],
 ) -> ApiResponse[list[EntityHistoryEntry]]:
-    rows, total = await service.job_history(job_id, page=page)
+    rows, total = await service.cylinder_history(cylinder_id, page=page)
     return paginated_response(rows, params=page, total=total)
 
 
-@jobs_router.post("/{job_id}/files/{slot}", response_model=ApiResponse[JobResponse])
-async def upload_job_file(
-    job_id: UUID,
+@cylinders_router.post("/{cylinder_id}/files/{slot}", response_model=ApiResponse[CylinderResponse])
+async def upload_cylinder_file(
+    cylinder_id: UUID,
     slot: str,
     current_user: CurrentUserDependency,
-    service: JobServiceDependency,
+    service: CylinderServiceDependency,
     file: Annotated[UploadFile, File()],
-) -> ApiResponse[JobResponse]:
-    if slot not in JOB_FILE_SLOTS:
+) -> ApiResponse[CylinderResponse]:
+    if slot not in CYLINDER_FILE_SLOTS:
         raise ValidationError("Invalid file slot")
     settings = get_settings()
     content = await _read_upload(
@@ -198,7 +198,7 @@ async def upload_job_file(
         max_bytes=max_upload_bytes(settings.max_upload_size_mb),
     )
     row = await service.upload_file(
-        job_id,
+        cylinder_id,
         slot,
         filename=file.filename,
         content=content,
@@ -208,48 +208,48 @@ async def upload_job_file(
     return ApiResponse(data=row, message="File uploaded successfully")
 
 
-@jobs_router.get(
-    "/{job_id}/history-attachments/{audit_log_id}",
+@cylinders_router.get(
+    "/{cylinder_id}/history-attachments/{audit_log_id}",
     response_class=Response,
 )
-async def download_job_history_attachment(
-    job_id: UUID,
+async def download_cylinder_history_attachment(
+    cylinder_id: UUID,
     audit_log_id: UUID,
     current_user: CurrentUserDependency,
-    service: JobServiceDependency,
+    service: CylinderServiceDependency,
 ) -> Response:
     body, content_type = await service.read_history_attachment(
-        job_id,
+        cylinder_id,
         audit_log_id,
         permissions=current_user.permissions,
     )
     return Response(content=body, media_type=content_type)
 
 
-@jobs_router.get("/{job_id}/files/{slot}", response_class=Response)
-async def download_job_file(
-    job_id: UUID,
+@cylinders_router.get("/{cylinder_id}/files/{slot}", response_class=Response)
+async def download_cylinder_file(
+    cylinder_id: UUID,
     slot: str,
     current_user: CurrentUserDependency,
-    service: JobServiceDependency,
+    service: CylinderServiceDependency,
 ) -> Response:
     body, content_type = await service.read_file(
-        job_id,
+        cylinder_id,
         slot,
         permissions=current_user.permissions,
     )
     return Response(content=body, media_type=content_type)
 
 
-@jobs_router.delete("/{job_id}/files/{slot}", response_model=ApiResponse[JobResponse])
-async def delete_job_file(
-    job_id: UUID,
+@cylinders_router.delete("/{cylinder_id}/files/{slot}", response_model=ApiResponse[CylinderResponse])
+async def delete_cylinder_file(
+    cylinder_id: UUID,
     slot: str,
     current_user: CurrentUserDependency,
-    service: JobServiceDependency,
-) -> ApiResponse[JobResponse]:
+    service: CylinderServiceDependency,
+) -> ApiResponse[CylinderResponse]:
     row = await service.delete_file(
-        job_id,
+        cylinder_id,
         slot,
         actor_user_id=current_user.user_id,
         permissions=current_user.permissions,
@@ -268,7 +268,7 @@ async def list_cylinder_returns(
         page=page,
         common_filter=filters,
         company_id=filters.company_id,
-        job_id=filters.job_id,
+        cylinder_id=filters.cylinder_id,
     )
     return paginated_response(rows, params=page, total=total)
 

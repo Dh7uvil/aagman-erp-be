@@ -28,24 +28,24 @@
     "identity.warehouse.delete",
     "identity.warehouse.read",
     "identity.warehouse.update",
+    "inventory.cylinder.create",
+    "inventory.cylinder.delete",
+    "inventory.cylinder.history",
+    "inventory.cylinder.read",
+    "inventory.cylinder.update",
+    "inventory.cylinder.view_price",
+    "inventory.cylinder_challan.create",
+    "inventory.cylinder_challan.delete",
+    "inventory.cylinder_challan.read",
+    "inventory.cylinder_challan.update",
+    "inventory.cylinder_image.create",
+    "inventory.cylinder_image.delete",
+    "inventory.cylinder_image.read",
+    "inventory.cylinder_image.update",
     "inventory.cylinder_return.create",
     "inventory.cylinder_return.delete",
     "inventory.cylinder_return.read",
     "inventory.cylinder_return.update",
-    "inventory.job.create",
-    "inventory.job.delete",
-    "inventory.job.history",
-    "inventory.job.read",
-    "inventory.job.update",
-    "inventory.job.view_price",
-    "inventory.job_challan.create",
-    "inventory.job_challan.delete",
-    "inventory.job_challan.read",
-    "inventory.job_challan.update",
-    "inventory.job_image.create",
-    "inventory.job_image.delete",
-    "inventory.job_image.read",
-    "inventory.job_image.update",
     "inventory.material.create",
     "inventory.material.delete",
     "inventory.material.history",
@@ -125,7 +125,7 @@
       "materials_report": [
         "read"
       ],
-      "job": [
+      "cylinder": [
         "create",
         "read",
         "update",
@@ -133,13 +133,13 @@
         "view_price",
         "history"
       ],
-      "job_image": [
+      "cylinder_image": [
         "create",
         "read",
         "update",
         "delete"
       ],
-      "job_challan": [
+      "cylinder_challan": [
         "create",
         "read",
         "update",

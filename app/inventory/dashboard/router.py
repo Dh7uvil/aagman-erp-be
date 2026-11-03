@@ -7,22 +7,22 @@ from fastapi import APIRouter, Depends
 from app.common.dependencies.auth import CurrentUser, CurrentUserDependency
 from app.common.dependencies.permissions import require_permission
 from app.common.schemas.response import ApiResponse
-from app.inventory.catalog import JOB_READ, MATERIAL_READ
+from app.inventory.catalog import CYLINDER_READ, MATERIAL_READ
 from app.inventory.dashboard.dependencies import DashboardServiceDependency
-from app.inventory.dashboard.schemas import DashboardRange, JobsDashboard, MaterialsDashboard
+from app.inventory.dashboard.schemas import DashboardRange, CylindersDashboard, MaterialsDashboard
 
 dashboard_router = APIRouter(prefix="/dashboard", tags=["Inventory Dashboard"])
 
 
-@dashboard_router.get("/jobs", response_model=ApiResponse[JobsDashboard])
-async def jobs_dashboard(
+@dashboard_router.get("/cylinders", response_model=ApiResponse[CylindersDashboard])
+async def cylinders_dashboard(
     service: DashboardServiceDependency,
     range_params: Annotated[DashboardRange, Depends()],
     current_user: CurrentUserDependency,
-    _: Annotated[CurrentUser, Depends(require_permission(JOB_READ))],
-) -> ApiResponse[JobsDashboard]:
+    _: Annotated[CurrentUser, Depends(require_permission(CYLINDER_READ))],
+) -> ApiResponse[CylindersDashboard]:
     return ApiResponse(
-        data=await service.jobs_overview(
+        data=await service.cylinders_overview(
             range_params=range_params,
             permissions=current_user.permissions,
         )

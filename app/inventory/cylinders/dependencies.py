@@ -6,12 +6,12 @@ from fastapi import Depends
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.session import get_db
-from app.inventory.jobs.returns_service import CylinderReturnService
-from app.inventory.jobs.service import JobService
+from app.inventory.cylinders.returns_service import CylinderReturnService
+from app.inventory.cylinders.service import CylinderService
 
 
-async def get_job_service(session: Annotated[AsyncSession, Depends(get_db)]) -> JobService:
-    return JobService(session)
+async def get_cylinder_service(session: Annotated[AsyncSession, Depends(get_db)]) -> CylinderService:
+    return CylinderService(session)
 
 
 async def get_cylinder_return_service(
@@ -20,5 +20,5 @@ async def get_cylinder_return_service(
     return CylinderReturnService(session)
 
 
-JobServiceDependency = Annotated[JobService, Depends(get_job_service)]
+CylinderServiceDependency = Annotated[CylinderService, Depends(get_cylinder_service)]
 CylinderReturnServiceDependency = Annotated[CylinderReturnService, Depends(get_cylinder_return_service)]

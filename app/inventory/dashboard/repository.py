@@ -6,18 +6,18 @@ from datetime import date, datetime, time, timedelta, timezone
 from decimal import Decimal
 from uuid import UUID
 
-from sqlalchemy import Date, cast, func, select
+from sqlalchemy import Date, and_, cast, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import aliased
 
-from app.core.enums import JobStatus, MaterialCategoryKind, MaterialMovementDirection
+from app.core.enums import CylinderStatus, MaterialCategoryKind, MaterialMovementDirection
 from app.identity.models import Company
-from app.inventory.jobs.models import CylinderReturn, Job, JobPause
+from app.inventory.cylinders.models import CylinderReturn, Cylinder, CylinderPause
 from app.inventory.models import InventoryUnit, MaterialCategory, MaterialMovement
 
 
 def _job_active() -> tuple[object, ...]:
-    return (Job.deleted_at.is_(None),)
+    return (Cylinder.deleted_at.is_(None),)
 
 
 def _datetime_start(d: date) -> datetime:
@@ -34,48 +34,53 @@ class DashboardRepository:
 
     async def job_status_counts(self) -> list[tuple[str, int]]:
         rows = await self.session.execute(
-            select(Job.status, func.count())
+            select(Cylinder.status, func.count())
             .where(*_job_active())
-            .group_by(Job.status)
+            .group_by(Cylinder.status)
         )
         return [(str(status), int(count)) for status, count in rows.all()]
 
     async def job_kpi_counts(
         self,
     ) -> tuple[int, int, int, int, Decimal | None]:
-        active_statuses = (JobStatus.ACTIVE.value, JobStatus.RESUMED.value)
+        active_statuses = (CylinderStatus.ACTIVE.value,)
         active = await self.session.scalar(
             select(func.count())
-            .select_from(Job)
-            .where(*_job_active(), Job.status.in_(active_statuses))
+            .select_from(Cylinder)
+            .where(*_job_active(), Cylinder.status.in_(active_statuses))
         )
         paused = await self.session.scalar(
             select(func.count())
-            .select_from(Job)
-            .where(*_job_active(), Job.status == JobStatus.PAUSED.value)
+            .select_from(Cylinder)
+            .where(*_job_active(), Cylinder.status == CylinderStatus.PAUSED.value)
         )
         cylinders = await self.session.scalar(
-            select(func.coalesce(func.sum(Job.cylinder_count), 0))
-            .select_from(Job)
-            .where(*_job_active(), Job.status != JobStatus.RETURNED.value)
+            select(func.coalesce(func.sum(Cylinder.cylinder_count), 0))
+            .select_from(Cylinder)
+            .where(*_job_active(), Cylinder.status == CylinderStatus.RETURNED.value)
         )
         awaiting = await self.session.scalar(
             select(func.count())
-            .select_from(Job)
+            .select_from(Cylinder)
             .outerjoin(
                 CylinderReturn,
-                (CylinderReturn.job_id == Job.id) & (CylinderReturn.deleted_at.is_(None)),
+                (CylinderReturn.cylinder_id == Cylinder.id) & (CylinderReturn.deleted_at.is_(None)),
             )
             .where(
                 *_job_active(),
-                Job.status == JobStatus.COMPLETED.value,
+                Cylinder.status == CylinderStatus.COMPLETED.value,
                 CylinderReturn.id.is_(None),
             )
         )
         cost_sum = await self.session.scalar(
-            select(func.coalesce(func.sum(Job.cylinder_cost), 0))
-            .select_from(Job)
-            .where(*_job_active(), Job.status != JobStatus.RETURNED.value)
+            select(
+                func.coalesce(
+                    func.sum(Cylinder.cylinder_cost * Cylinder.cylinder_count),
+                    0,
+                )
+            )
+            .select_from(Cylinder)
+            .where(*_job_active(), Cylinder.status == CylinderStatus.ACTIVE.value)
         )
         cost = Decimal(cost_sum) if cost_sum is not None else Decimal("0")
         return (
@@ -97,18 +102,18 @@ class DashboardRepository:
         end_dt = _datetime_end(date_to)
 
         if weekly:
-            job_bucket = cast(func.date_trunc("week", Job.created_at), Date)
+            job_bucket = cast(func.date_trunc("week", Cylinder.created_at), Date)
             return_bucket = cast(func.date_trunc("week", CylinderReturn.created_at), Date)
         else:
-            job_bucket = cast(Job.created_at, Date)
+            job_bucket = cast(Cylinder.created_at, Date)
             return_bucket = cast(CylinderReturn.created_at, Date)
 
         job_rows = await self.session.execute(
             select(job_bucket, func.count())
             .where(
                 *_job_active(),
-                Job.created_at >= start_dt,
-                Job.created_at <= end_dt,
+                Cylinder.created_at >= start_dt,
+                Cylinder.created_at <= end_dt,
             )
             .group_by(job_bucket)
             .order_by(job_bucket)
@@ -135,23 +140,23 @@ class DashboardRepository:
             for bucket in all_keys
         ]
 
-    async def top_companies_by_active_jobs(self, *, limit: int = 5) -> list[tuple[UUID, str, int, int]]:
-        active_statuses = (JobStatus.ACTIVE.value, JobStatus.RESUMED.value)
+    async def top_companies_by_active_cylinders(self, *, limit: int = 5) -> list[tuple[UUID, str, int, int]]:
+        active_statuses = (CylinderStatus.ACTIVE.value,)
         rows = await self.session.execute(
             select(
-                Job.company_id,
+                Cylinder.company_id,
                 Company.name,
                 func.count(),
-                func.coalesce(func.sum(Job.cylinder_count), 0),
+                func.coalesce(func.sum(Cylinder.cylinder_count), 0),
             )
-            .join(Company, Company.id == Job.company_id)
+            .join(Company, Company.id == Cylinder.company_id)
             .where(
                 *_job_active(),
-                Job.status.in_(active_statuses),
+                Cylinder.status.in_(active_statuses),
                 Company.deleted_at.is_(None),
             )
-            .group_by(Job.company_id, Company.name)
-            .order_by(func.count().desc(), func.sum(Job.cylinder_count).desc())
+            .group_by(Cylinder.company_id, Company.name)
+            .order_by(func.count().desc(), func.sum(Cylinder.cylinder_count).desc())
             .limit(limit)
         )
         return [
@@ -159,17 +164,17 @@ class DashboardRepository:
             for company_id, name, job_count, cylinders in rows.all()
         ]
 
-    async def longest_open_pauses(self, *, limit: int = 5) -> list[tuple[Job, str, JobPause]]:
+    async def longest_open_pauses(self, *, limit: int = 5) -> list[tuple[Cylinder, str, CylinderPause]]:
         rows = await self.session.execute(
-            select(Job, Company.name, JobPause)
-            .join(JobPause, JobPause.job_id == Job.id)
-            .join(Company, Company.id == Job.company_id)
+            select(Cylinder, Company.name, CylinderPause)
+            .join(CylinderPause, CylinderPause.cylinder_id == Cylinder.id)
+            .join(Company, Company.id == Cylinder.company_id)
             .where(
                 *_job_active(),
-                JobPause.resumed_at.is_(None),
+                CylinderPause.resumed_at.is_(None),
                 Company.deleted_at.is_(None),
             )
-            .order_by(JobPause.paused_at.asc())
+            .order_by(CylinderPause.paused_at.asc())
             .limit(limit)
         )
         return [(job, company_name, pause) for job, company_name, pause in rows.all()]
@@ -330,3 +335,60 @@ class DashboardRepository:
             .order_by(MaterialCategory.name)
         )
         return list(result.scalars().all())
+
+    async def list_dead_stock_skus(
+        self,
+        *,
+        as_of: date | None = None,
+        idle_days: int = 60,
+    ) -> list[tuple[UUID, str, Decimal, date]]:
+        """Active SKUs with kg on hand and no stock activity within idle_days."""
+        today = as_of or date.today()
+        cutoff = today - timedelta(days=idle_days)
+        movement_directions = (
+            MaterialMovementDirection.IN.value,
+            MaterialMovementDirection.OUT.value,
+            MaterialMovementDirection.OPENING.value,
+        )
+        created_date = cast(MaterialCategory.created_at, Date)
+        last_activity = func.coalesce(func.max(MaterialMovement.movement_date), created_date)
+
+        rows = await self.session.execute(
+            select(
+                MaterialCategory.id,
+                MaterialCategory.name,
+                MaterialCategory.total_kg,
+                last_activity.label("last_activity"),
+            )
+            .outerjoin(
+                MaterialMovement,
+                and_(
+                    MaterialMovement.category_id == MaterialCategory.id,
+                    MaterialMovement.deleted_at.is_(None),
+                    MaterialMovement.direction.in_(movement_directions),
+                ),
+            )
+            .where(
+                MaterialCategory.category_kind == MaterialCategoryKind.SKU.value,
+                MaterialCategory.deleted_at.is_(None),
+                MaterialCategory.is_active.is_(True),
+                MaterialCategory.total_kg > 0,
+            )
+            .group_by(
+                MaterialCategory.id,
+                MaterialCategory.name,
+                MaterialCategory.total_kg,
+                MaterialCategory.created_at,
+            )
+            .having(last_activity < cutoff)
+            .order_by(last_activity.asc())
+        )
+        return [
+            (
+                sku_id,
+                name,
+                Decimal(total_kg or 0),
+                last_activity_date,
+            )
+            for sku_id, name, total_kg, last_activity_date in rows.all()
+        ]

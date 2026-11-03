@@ -17,22 +17,22 @@ MATERIAL_HISTORY = build_permission(INVENTORY_MODULE, "material", "history")
 
 MATERIALS_REPORT_READ = build_permission(INVENTORY_MODULE, "materials_report", "read")
 
-JOB_CREATE = build_permission(INVENTORY_MODULE, "job", "create")
-JOB_READ = build_permission(INVENTORY_MODULE, "job", "read")
-JOB_UPDATE = build_permission(INVENTORY_MODULE, "job", "update")
-JOB_DELETE = build_permission(INVENTORY_MODULE, "job", "delete")
-JOB_VIEW_PRICE = build_permission(INVENTORY_MODULE, "job", "view_price")
-JOB_HISTORY = build_permission(INVENTORY_MODULE, "job", "history")
+CYLINDER_CREATE = build_permission(INVENTORY_MODULE, "cylinder", "create")
+CYLINDER_READ = build_permission(INVENTORY_MODULE, "cylinder", "read")
+CYLINDER_UPDATE = build_permission(INVENTORY_MODULE, "cylinder", "update")
+CYLINDER_DELETE = build_permission(INVENTORY_MODULE, "cylinder", "delete")
+CYLINDER_VIEW_PRICE = build_permission(INVENTORY_MODULE, "cylinder", "view_price")
+CYLINDER_HISTORY = build_permission(INVENTORY_MODULE, "cylinder", "history")
 
-JOB_IMAGE_CREATE = build_permission(INVENTORY_MODULE, "job_image", "create")
-JOB_IMAGE_READ = build_permission(INVENTORY_MODULE, "job_image", "read")
-JOB_IMAGE_UPDATE = build_permission(INVENTORY_MODULE, "job_image", "update")
-JOB_IMAGE_DELETE = build_permission(INVENTORY_MODULE, "job_image", "delete")
+CYLINDER_IMAGE_CREATE = build_permission(INVENTORY_MODULE, "cylinder_image", "create")
+CYLINDER_IMAGE_READ = build_permission(INVENTORY_MODULE, "cylinder_image", "read")
+CYLINDER_IMAGE_UPDATE = build_permission(INVENTORY_MODULE, "cylinder_image", "update")
+CYLINDER_IMAGE_DELETE = build_permission(INVENTORY_MODULE, "cylinder_image", "delete")
 
-JOB_CHALLAN_CREATE = build_permission(INVENTORY_MODULE, "job_challan", "create")
-JOB_CHALLAN_READ = build_permission(INVENTORY_MODULE, "job_challan", "read")
-JOB_CHALLAN_UPDATE = build_permission(INVENTORY_MODULE, "job_challan", "update")
-JOB_CHALLAN_DELETE = build_permission(INVENTORY_MODULE, "job_challan", "delete")
+CYLINDER_CHALLAN_CREATE = build_permission(INVENTORY_MODULE, "cylinder_challan", "create")
+CYLINDER_CHALLAN_READ = build_permission(INVENTORY_MODULE, "cylinder_challan", "read")
+CYLINDER_CHALLAN_UPDATE = build_permission(INVENTORY_MODULE, "cylinder_challan", "update")
+CYLINDER_CHALLAN_DELETE = build_permission(INVENTORY_MODULE, "cylinder_challan", "delete")
 
 CYLINDER_RETURN_CREATE = build_permission(INVENTORY_MODULE, "cylinder_return", "create")
 CYLINDER_RETURN_READ = build_permission(INVENTORY_MODULE, "cylinder_return", "read")
@@ -43,9 +43,9 @@ _CATALOG: dict[str, tuple[str, ...]] = {
     "unit": ("create", "read", "update", "delete"),
     "material": ("create", "read", "update", "delete", "view_price", "history"),
     "materials_report": ("read",),
-    "job": ("create", "read", "update", "delete", "view_price", "history"),
-    "job_image": ("create", "read", "update", "delete"),
-    "job_challan": ("create", "read", "update", "delete"),
+    "cylinder": ("create", "read", "update", "delete", "view_price", "history"),
+    "cylinder_image": ("create", "read", "update", "delete"),
+    "cylinder_challan": ("create", "read", "update", "delete"),
     "cylinder_return": ("create", "read", "update", "delete"),
 }
 

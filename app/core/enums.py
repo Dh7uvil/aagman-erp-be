@@ -64,9 +64,8 @@ class MaterialCategoryKind(StrEnum):
     SKU = "sku"
 
 
-class JobStatus(StrEnum):
+class CylinderStatus(StrEnum):
     ACTIVE = "ACTIVE"
     PAUSED = "PAUSED"
-    RESUMED = "RESUMED"
     COMPLETED = "COMPLETED"
     RETURNED = "RETURNED"

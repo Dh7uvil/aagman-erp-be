@@ -816,6 +816,19 @@ class AuditLogSummaryResponse(BaseModel):
     admin_actions: int
 
 
+def _normalize_optional_gst_number(value: str | None) -> str | None:
+    if value is None:
+        return None
+    normalized = value.strip().upper()
+    if not normalized:
+        return None
+    if len(normalized) > 15:
+        raise ValueError("gst_number must be at most 15 characters")
+    if not normalized.isalnum():
+        raise ValueError("gst_number must contain only letters and digits")
+    return normalized
+
+
 def _normalize_optional_email(value: str | None) -> str | None:
     if value is None:
         return None
@@ -839,6 +852,7 @@ class CompanyCreate(BaseModel):
     name: str = Field(min_length=1, max_length=200)
     email: str | None = Field(default=None, max_length=255)
     phone: str | None = Field(default=None, max_length=50)
+    gst_number: str | None = Field(default=None, max_length=15)
     address: AddressPayload | None = None
     bill_to_address: AddressPayload | None = None
     ship_to_address: AddressPayload | None = None
@@ -858,11 +872,17 @@ class CompanyCreate(BaseModel):
     def normalize_phone(cls, value: str | None) -> str | None:
         return _normalize_optional_phone(value)
 
+    @field_validator("gst_number")
+    @classmethod
+    def normalize_gst_number(cls, value: str | None) -> str | None:
+        return _normalize_optional_gst_number(value)
+
 
 class CompanyUpdate(BaseModel):
     name: str | None = Field(default=None, min_length=1, max_length=200)
     email: str | None = Field(default=None, max_length=255)
     phone: str | None = Field(default=None, max_length=50)
+    gst_number: str | None = Field(default=None, max_length=15)
     address: AddressPayload | None = None
     bill_to_address: AddressPayload | None = None
     ship_to_address: AddressPayload | None = None
@@ -884,12 +904,18 @@ class CompanyUpdate(BaseModel):
     def normalize_phone(cls, value: str | None) -> str | None:
         return _normalize_optional_phone(value)
 
+    @field_validator("gst_number")
+    @classmethod
+    def normalize_gst_number(cls, value: str | None) -> str | None:
+        return _normalize_optional_gst_number(value)
+
 
 class CompanyResponse(BaseModel):
     id: UUID
     name: str
     email: str | None
     phone: str | None
+    gst_number: str | None = None
     address: AddressResponse | None = None
     bill_to_address: AddressResponse | None = None
     ship_to_address: AddressResponse | None = None

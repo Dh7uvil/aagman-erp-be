@@ -282,6 +282,7 @@ class Company(SoftDeleteModel):
     name: Mapped[str] = mapped_column(String(200), nullable=False)
     email: Mapped[str | None] = mapped_column(String(255), nullable=True)
     phone: Mapped[str | None] = mapped_column(String(50), nullable=True)
+    gst_number: Mapped[str | None] = mapped_column(String(15), nullable=True)
     address_id: Mapped[UUID | None] = mapped_column(
         PostgreSQLUUID(as_uuid=True),
         ForeignKey("addresses.id", ondelete="SET NULL"),

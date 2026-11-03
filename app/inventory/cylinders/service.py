@@ -24,7 +24,7 @@ from app.common.utils.files import (
     validate_upload,
 )
 from app.core.config import get_settings
-from app.core.enums import AuditAction, INVENTORY_MODULE, JobStatus
+from app.core.enums import AuditAction, INVENTORY_MODULE, CylinderStatus
 from app.core.exceptions import (
     DuplicateResourceError,
     PermissionDeniedError,
@@ -36,21 +36,21 @@ from app.db.session import transaction
 from app.identity.models import Company, User
 from app.integrations.storage import get_optional_storage
 from app.inventory.catalog import (
-    JOB_CHALLAN_CREATE,
-    JOB_CHALLAN_DELETE,
-    JOB_CHALLAN_READ,
-    JOB_CHALLAN_UPDATE,
-    JOB_IMAGE_CREATE,
-    JOB_IMAGE_DELETE,
-    JOB_IMAGE_READ,
-    JOB_IMAGE_UPDATE,
-    JOB_VIEW_PRICE,
+    CYLINDER_CHALLAN_CREATE,
+    CYLINDER_CHALLAN_DELETE,
+    CYLINDER_CHALLAN_READ,
+    CYLINDER_CHALLAN_UPDATE,
+    CYLINDER_IMAGE_CREATE,
+    CYLINDER_IMAGE_DELETE,
+    CYLINDER_IMAGE_READ,
+    CYLINDER_IMAGE_UPDATE,
+    CYLINDER_VIEW_PRICE,
 )
-from app.inventory.jobs import storage as job_storage
-from app.inventory.jobs.models import Job, JobPause
-from app.inventory.jobs.repository import (
+from app.inventory.cylinders import storage as cylinder_storage
+from app.inventory.cylinders.models import Cylinder, CylinderPause
+from app.inventory.cylinders.repository import (
     CylinderReturnRepository,
-    JobRepository,
+    CylinderRepository,
     load_colors,
     load_cylinders,
     load_pauses,
@@ -58,30 +58,30 @@ from app.inventory.jobs.repository import (
     replace_cylinders,
 )
 from app.common.utils.time import utcnow
-from app.inventory.jobs.schemas import (
-    JOB_FILE_SLOTS,
-    JobCreate,
-    JobFileMeta,
-    JobListItem,
-    JobPauseRequest,
-    JobPauseResponse,
-    JobResponse,
-    JobResumeRequest,
-    JobUpdate,
+from app.inventory.cylinders.schemas import (
+    CYLINDER_FILE_SLOTS,
+    CylinderCreate,
+    CylinderFileMeta,
+    CylinderListItem,
+    CylinderPauseRequest,
+    CylinderPauseResponse,
+    CylinderResponse,
+    CylinderResumeRequest,
+    CylinderUpdate,
 )
 
 JOB_ALLOWED_MIME = (MIME_JPEG, MIME_PNG, MIME_WEBP, MIME_PDF)
 
-_SLOT_READ = {"job_image": JOB_IMAGE_READ, "challan": JOB_CHALLAN_READ}
-_SLOT_CREATE = {"job_image": JOB_IMAGE_CREATE, "challan": JOB_CHALLAN_CREATE}
-_SLOT_UPDATE = {"job_image": JOB_IMAGE_UPDATE, "challan": JOB_CHALLAN_UPDATE}
-_SLOT_DELETE = {"job_image": JOB_IMAGE_DELETE, "challan": JOB_CHALLAN_DELETE}
+_SLOT_READ = {"cylinder_image": CYLINDER_IMAGE_READ, "challan": CYLINDER_CHALLAN_READ}
+_SLOT_CREATE = {"cylinder_image": CYLINDER_IMAGE_CREATE, "challan": CYLINDER_CHALLAN_CREATE}
+_SLOT_UPDATE = {"cylinder_image": CYLINDER_IMAGE_UPDATE, "challan": CYLINDER_CHALLAN_UPDATE}
+_SLOT_DELETE = {"cylinder_image": CYLINDER_IMAGE_DELETE, "challan": CYLINDER_CHALLAN_DELETE}
 
 
-class JobService:
+class CylinderService:
     def __init__(self, session: AsyncSession) -> None:
         self.session = session
-        self.repo = JobRepository(session)
+        self.repo = CylinderRepository(session)
         self.returns_repo = CylinderReturnRepository(session)
         self.audit = AuditWriter(session)
         self.history = EntityHistoryService(session)
@@ -90,18 +90,18 @@ class JobService:
 
     @staticmethod
     def _can_view_price(permissions: frozenset[str]) -> bool:
-        return has_permission(permissions, JOB_VIEW_PRICE)
+        return has_permission(permissions, CYLINDER_VIEW_PRICE)
 
-    async def list_jobs(
+    async def list_cylinders(
         self,
         *,
         page: PageParams,
         common_filter: BaseFilter | None,
-        status: JobStatus | None,
+        status: CylinderStatus | None,
         company_id: UUID | None,
         include_closed: bool,
         permissions: frozenset[str],
-    ) -> tuple[list[JobListItem], int]:
+    ) -> tuple[list[CylinderListItem], int]:
         filters: dict[str, object] = {}
         if status is not None:
             filters["status"] = status.value
@@ -110,11 +110,10 @@ class JobService:
         extra: list[ColumnElement[bool]] = []
         if status is None and not include_closed:
             extra.append(
-                Job.status.in_(
+                Cylinder.status.in_(
                     [
-                        JobStatus.ACTIVE.value,
-                        JobStatus.RESUMED.value,
-                        JobStatus.COMPLETED.value,
+                        CylinderStatus.ACTIVE.value,
+                        CylinderStatus.COMPLETED.value,
                     ]
                 )
             )
@@ -126,10 +125,11 @@ class JobService:
         )
         company_names = await self._company_names({row.company_id for row in rows})
         can_view_price = self._can_view_price(permissions)
+        can_view_image = has_permission(permissions, CYLINDER_IMAGE_READ)
         items = [
-            JobListItem(
+            CylinderListItem(
                 id=row.id,
-                job_number=row.job_number,
+                cylinder_number=row.cylinder_number,
                 company_id=row.company_id,
                 company_name=company_names.get(row.company_id, ""),
                 product_name=row.product_name,
@@ -138,7 +138,10 @@ class JobService:
                 pet_size=row.pet_size,
                 cylinder_cost=row.cylinder_cost if can_view_price else None,
                 cylinder_location=row.cylinder_location,
-                status=JobStatus(row.status),
+                status=CylinderStatus(row.status),
+                cylinder_image=(
+                    self._file_meta(row, "cylinder_image") if can_view_image else None
+                ),
                 created_at=row.created_at,
                 updated_at=row.updated_at,
             )
@@ -146,24 +149,24 @@ class JobService:
         ]
         return items, total
 
-    async def get_job(self, job_id: UUID, *, permissions: frozenset[str]) -> JobResponse:
-        row = await self._require_job(job_id)
+    async def get_cylinder(self, cylinder_id: UUID, *, permissions: frozenset[str]) -> CylinderResponse:
+        row = await self._require_cylinder(cylinder_id)
         return await self._to_response(row, permissions=permissions, include_children=True)
 
-    async def create_job(
+    async def create_cylinder(
         self,
-        payload: JobCreate,
+        payload: CylinderCreate,
         *,
         actor_user_id: UUID,
         permissions: frozenset[str],
-    ) -> JobResponse:
+    ) -> CylinderResponse:
         if payload.cylinder_cost is not None and not self._can_view_price(permissions):
             raise PermissionDeniedError("You do not have permission to set cylinder cost")
         await self._require_company(payload.company_id)
         async with transaction(self.session):
-            job_number = await self.repo.next_job_number()
+            cylinder_number = await self.repo.next_cylinder_number()
             values: dict[str, object] = {
-                "job_number": job_number,
+                "cylinder_number": cylinder_number,
                 "company_id": payload.company_id,
                 "product_name": payload.product_name,
                 "cylinder_count": payload.cylinder_count,
@@ -179,7 +182,7 @@ class JobService:
             try:
                 row = await self.repo.create(values)
             except IntegrityError as exc:
-                raise DuplicateResourceError("Job number conflict; retry") from exc
+                raise DuplicateResourceError("Cylinder number conflict; retry") from exc
             await replace_cylinders(
                 self.session,
                 row.id,
@@ -195,20 +198,20 @@ class JobService:
                 user_id=actor_user_id,
                 action=AuditAction.CREATE,
                 module=INVENTORY_MODULE,
-                entity_type="job",
+                entity_type="cylinder",
                 entity_id=row.id,
-                new_values=await self._job_snapshot(row),
+                new_values=await self._cylinder_snapshot(row),
             )
             return await self._to_response(row, permissions=permissions, include_children=True)
 
-    async def update_job(
+    async def update_cylinder(
         self,
-        job_id: UUID,
-        payload: JobUpdate,
+        cylinder_id: UUID,
+        payload: CylinderUpdate,
         *,
         actor_user_id: UUID,
         permissions: frozenset[str],
-    ) -> JobResponse:
+    ) -> CylinderResponse:
         values = payload.model_dump(exclude_unset=True)
         cylinders = values.pop("cylinders", None)
         colors = values.pop("colors", None)
@@ -217,15 +220,15 @@ class JobService:
         if "status" in values and values["status"] is not None:
             status_value = values["status"]
             values["status"] = (
-                status_value.value if isinstance(status_value, JobStatus) else str(status_value)
+                status_value.value if isinstance(status_value, CylinderStatus) else str(status_value)
             )
         if "company_id" in values and values["company_id"] is not None:
             await self._require_company(values["company_id"])
         async with transaction(self.session):
-            row = await self._require_job(job_id)
-            if row.status == JobStatus.RETURNED.value:
-                raise ValidationError("Returned jobs cannot be edited")
-            old_snapshot = await self._job_snapshot(row)
+            row = await self._require_cylinder(cylinder_id)
+            if row.status == CylinderStatus.RETURNED.value:
+                raise ValidationError("Returned cylinders cannot be edited")
+            old_snapshot = await self._cylinder_snapshot(row)
             if cylinders is not None:
                 count = values.get("cylinder_count", row.cylinder_count)
                 if len(cylinders) != count:
@@ -236,109 +239,109 @@ class JobService:
                 if count is not None and len(colors) != count:
                     raise ValidationError("colors length must match color_count")
             values["updated_by"] = actor_user_id
-            updated = await self.repo.update(job_id, values)
+            updated = await self.repo.update(cylinder_id, values)
             if updated is None:
-                raise ResourceNotFoundError("Job not found")
+                raise ResourceNotFoundError("Cylinder not found")
             if cylinders is not None:
                 await replace_cylinders(
                     self.session,
-                    job_id,
+                    cylinder_id,
                     [{"width": c["width"], "circumference": c["circumference"]} for c in cylinders],
                 )
             if colors is not None:
                 await replace_colors(
                     self.session,
-                    job_id,
+                    cylinder_id,
                     [{"name": str(c["name"]).strip()} for c in colors],
                 )
-            new_snapshot = await self._job_snapshot(updated)
+            new_snapshot = await self._cylinder_snapshot(updated)
             if audit_field_changes(old_snapshot, new_snapshot):
                 await self.audit.write(
                     user_id=actor_user_id,
                     action=AuditAction.UPDATE,
                     module=INVENTORY_MODULE,
-                    entity_type="job",
+                    entity_type="cylinder",
                     entity_id=updated.id,
                     old_values=old_snapshot,
                     new_values=new_snapshot,
                 )
             return await self._to_response(updated, permissions=permissions, include_children=True)
 
-    async def delete_job(self, job_id: UUID, *, actor_user_id: UUID) -> JobResponse:
+    async def delete_cylinder(self, cylinder_id: UUID, *, actor_user_id: UUID) -> CylinderResponse:
         async with transaction(self.session):
-            row = await self._require_job(job_id)
+            row = await self._require_cylinder(cylinder_id)
             response = await self._to_response(
                 row,
                 permissions=frozenset(),
                 include_children=True,
             )
-            deleted = await self.repo.soft_delete(job_id)
+            deleted = await self.repo.soft_delete(cylinder_id)
             if deleted is None:
-                raise ResourceNotFoundError("Job not found")
+                raise ResourceNotFoundError("Cylinder not found")
             await self.audit.write(
                 user_id=actor_user_id,
                 action=AuditAction.DELETE,
                 module=INVENTORY_MODULE,
-                entity_type="job",
+                entity_type="cylinder",
                 entity_id=row.id,
-                old_values=await self._job_snapshot(row),
+                old_values=await self._cylinder_snapshot(row),
             )
             return response
 
-    async def pause_job(
+    async def pause_cylinder(
         self,
-        job_id: UUID,
-        payload: JobPauseRequest,
+        cylinder_id: UUID,
+        payload: CylinderPauseRequest,
         *,
         actor_user_id: UUID,
         permissions: frozenset[str],
-    ) -> JobResponse:
+    ) -> CylinderResponse:
         async with transaction(self.session):
-            row = await self._require_job(job_id)
-            if row.status == JobStatus.RETURNED.value:
-                raise ValidationError("Returned jobs cannot be paused")
-            if row.status == JobStatus.COMPLETED.value:
-                raise ValidationError("Completed jobs cannot be paused")
+            row = await self._require_cylinder(cylinder_id)
+            if row.status == CylinderStatus.RETURNED.value:
+                raise ValidationError("Returned cylinders cannot be paused")
+            if row.status == CylinderStatus.COMPLETED.value:
+                raise ValidationError("Completed cylinders cannot be paused")
             try:
                 self.session.add(
-                    JobPause(
-                        job_id=job_id,
+                    CylinderPause(
+                        cylinder_id=cylinder_id,
                         paused_at=utcnow(),
                         paused_by=actor_user_id,
                         pause_remarks=payload.pause_remarks,
                     )
                 )
-                row.status = JobStatus.PAUSED.value
+                row.status = CylinderStatus.PAUSED.value
                 row.updated_by = actor_user_id
                 await self.session.flush()
             except IntegrityError as exc:
-                raise ValidationError("Job is already paused") from exc
+                raise ValidationError("Cylinder is already paused") from exc
             await self.session.refresh(row, attribute_names=["updated_at"])
             await self.audit.write(
                 user_id=actor_user_id,
                 action=AuditAction.UPDATE,
                 module=INVENTORY_MODULE,
-                entity_type="job",
+                entity_type="cylinder",
                 entity_id=row.id,
                 new_values={"event_kind": "pause", "pause_remarks": payload.pause_remarks},
             )
             return await self._to_response(row, permissions=permissions, include_children=True)
 
-    async def resume_job(
+    async def resume_cylinder(
         self,
-        job_id: UUID,
-        payload: JobResumeRequest,
+        cylinder_id: UUID,
+        payload: CylinderResumeRequest,
         *,
         actor_user_id: UUID,
         permissions: frozenset[str],
-    ) -> JobResponse:
+    ) -> CylinderResponse:
         async with transaction(self.session):
-            row = await self._require_job(job_id)
-            if row.status != JobStatus.PAUSED.value:
-                raise ValidationError("Job is not paused")
+            row = await self._require_cylinder(cylinder_id)
+            if row.status != CylinderStatus.PAUSED.value:
+                raise ValidationError("Cylinder is not paused")
             pause_row = await self.session.scalar(
-                select(JobPause)
-                .where(JobPause.job_id == job_id, JobPause.resumed_at.is_(None))
+                select(CylinderPause)
+                .where(CylinderPause.cylinder_id == cylinder_id, CylinderPause.resumed_at.is_(None))
                 .limit(1)
             )
             if pause_row is None:
@@ -347,7 +350,7 @@ class JobService:
             pause_row.resumed_at = now
             pause_row.resumed_by = actor_user_id
             pause_row.resume_remarks = payload.resume_remarks
-            row.status = JobStatus.RESUMED.value
+            row.status = CylinderStatus.ACTIVE.value
             row.updated_by = actor_user_id
             await self.session.flush()
             await self.session.refresh(row, attribute_names=["updated_at"])
@@ -355,7 +358,7 @@ class JobService:
                 user_id=actor_user_id,
                 action=AuditAction.UPDATE,
                 module=INVENTORY_MODULE,
-                entity_type="job",
+                entity_type="cylinder",
                 entity_id=row.id,
                 new_values={"event_kind": "resume", "resume_remarks": payload.resume_remarks},
             )
@@ -363,17 +366,17 @@ class JobService:
 
     async def upload_file(
         self,
-        job_id: UUID,
+        cylinder_id: UUID,
         slot: str,
         *,
         filename: str | None,
         content: bytes,
         actor_user_id: UUID,
         permissions: frozenset[str],
-    ) -> JobResponse:
-        if slot not in JOB_FILE_SLOTS:
+    ) -> CylinderResponse:
+        if slot not in CYLINDER_FILE_SLOTS:
             raise ValidationError("Invalid file slot")
-        row = await self._require_job(job_id)
+        row = await self._require_cylinder(cylinder_id)
         has_file = self._slot_has_file(row, slot)
         required = _SLOT_UPDATE[slot] if has_file else _SLOT_CREATE[slot]
         if not has_permission(permissions, required):
@@ -385,14 +388,14 @@ class JobService:
             allowed_mime_types=JOB_ALLOWED_MIME,
         )
         async with transaction(self.session):
-            row = await self._require_job(job_id)
+            row = await self._require_cylinder(cylinder_id)
             new_key = (
-                job_storage.build_job_file_object_key(
-                    job_id=job_id, slot=slot, filename=validated.filename
+                cylinder_storage.build_cylinder_file_object_key(
+                    cylinder_id=cylinder_id, slot=slot, filename=validated.filename
                 )
                 if self.storage is None
-                else job_storage.build_job_file_object_key(
-                    job_id=job_id, slot=slot, filename=validated.filename
+                else cylinder_storage.build_cylinder_file_object_key(
+                    cylinder_id=cylinder_id, slot=slot, filename=validated.filename
                 )
             )
             self._set_slot(row, slot, new_key, validated)
@@ -405,12 +408,12 @@ class JobService:
                     content_type=validated.content_type,
                 )
             else:
-                job_storage.write_job_file(new_key, validated.content)
+                cylinder_storage.write_cylinder_file(new_key, validated.content)
             await self.audit.write(
                 user_id=actor_user_id,
                 action=AuditAction.UPDATE,
                 module=INVENTORY_MODULE,
-                entity_type="job",
+                entity_type="cylinder",
                 entity_id=row.id,
                 new_values={
                     "event_kind": "attachment",
@@ -421,34 +424,34 @@ class JobService:
             )
             return await self._to_response(row, permissions=permissions, include_children=True)
 
-    async def read_file(self, job_id: UUID, slot: str, *, permissions: frozenset[str]) -> tuple[bytes, str]:
-        if slot not in JOB_FILE_SLOTS:
+    async def read_file(self, cylinder_id: UUID, slot: str, *, permissions: frozenset[str]) -> tuple[bytes, str]:
+        if slot not in CYLINDER_FILE_SLOTS:
             raise ValidationError("Invalid file slot")
         if not has_permission(permissions, _SLOT_READ[slot]):
             raise PermissionDeniedError("You do not have permission to view this file")
-        row = await self._require_job(job_id)
+        row = await self._require_cylinder(cylinder_id)
         key = self._slot_storage_key(row, slot)
         if not key:
             raise ResourceNotFoundError("File not found")
         if self.storage is not None:
             body, content_type = await self.storage.download(key=key)
             return body, content_type
-        return job_storage.read_job_file(key)
+        return cylinder_storage.read_cylinder_file(key)
 
     async def delete_file(
         self,
-        job_id: UUID,
+        cylinder_id: UUID,
         slot: str,
         *,
         actor_user_id: UUID,
         permissions: frozenset[str],
-    ) -> JobResponse:
-        if slot not in JOB_FILE_SLOTS:
+    ) -> CylinderResponse:
+        if slot not in CYLINDER_FILE_SLOTS:
             raise ValidationError("Invalid file slot")
         if not has_permission(permissions, _SLOT_DELETE[slot]):
             raise PermissionDeniedError("You do not have permission to delete this file")
         async with transaction(self.session):
-            row = await self._require_job(job_id)
+            row = await self._require_cylinder(cylinder_id)
             key = self._slot_storage_key(row, slot)
             if not key:
                 raise ResourceNotFoundError("File not found")
@@ -461,7 +464,7 @@ class JobService:
                 user_id=actor_user_id,
                 action=AuditAction.UPDATE,
                 module=INVENTORY_MODULE,
-                entity_type="job",
+                entity_type="cylinder",
                 entity_id=row.id,
                 new_values={
                     "event_kind": "attachment",
@@ -475,7 +478,7 @@ class JobService:
 
     async def read_history_attachment(
         self,
-        job_id: UUID,
+        cylinder_id: UUID,
         audit_log_id: UUID,
         *,
         permissions: frozenset[str],
@@ -486,13 +489,13 @@ class JobService:
             select(AuditLog).where(AuditLog.id == audit_log_id)
         )
         row = result.scalar_one_or_none()
-        if row is None or row.entity_type != "job" or row.entity_id != job_id:
+        if row is None or row.entity_type != "cylinder" or row.entity_id != cylinder_id:
             raise ResourceNotFoundError("Attachment not found")
         new_values = row.new_values or {}
         if new_values.get("event_kind") != "attachment":
             raise ResourceNotFoundError("Attachment not found")
         slot = str(new_values.get("slot") or "")
-        if slot not in JOB_FILE_SLOTS:
+        if slot not in CYLINDER_FILE_SLOTS:
             raise ResourceNotFoundError("Attachment not found")
         if not has_permission(permissions, _SLOT_READ[slot]):
             raise PermissionDeniedError("You do not have permission to view this file")
@@ -500,30 +503,30 @@ class JobService:
         if not isinstance(storage_key, str) or not storage_key.strip():
             raise ResourceNotFoundError("Attachment not found")
         key = storage_key.strip()
-        prefix = f"jobs/{job_id}/"
+        prefix = f"cylinders/{cylinder_id}/"
         if not key.startswith(prefix):
             raise ResourceNotFoundError("Attachment not found")
         if self.storage is not None:
             return await self.storage.download(key=key)
-        return job_storage.read_job_file(key)
+        return cylinder_storage.read_cylinder_file(key)
 
-    async def job_history(
+    async def cylinder_history(
         self,
-        job_id: UUID,
+        cylinder_id: UUID,
         *,
         page: PageParams,
     ) -> tuple[list[EntityHistoryEntry], int]:
-        await self._require_job(job_id)
+        await self._require_cylinder(cylinder_id)
         return await self.history.list_for_entity(
-            entity_type="job",
-            entity_id=job_id,
+            entity_type="cylinder",
+            entity_id=cylinder_id,
             page=page,
         )
 
-    async def _require_job(self, job_id: UUID) -> Job:
-        row = await self.repo.get(job_id)
+    async def _require_cylinder(self, cylinder_id: UUID) -> Cylinder:
+        row = await self.repo.get(cylinder_id)
         if row is None:
-            raise ResourceNotFoundError("Job not found")
+            raise ResourceNotFoundError("Cylinder not found")
         return row
 
     async def _require_company(self, company_id: UUID) -> Company:
@@ -547,9 +550,9 @@ class JobService:
         result = await self.session.execute(select(User).where(User.id.in_(ids)))
         return {row.id: row.name for row in result.scalars().all()}
 
-    async def _job_snapshot(self, row: Job) -> dict[str, object]:
+    async def _cylinder_snapshot(self, row: Cylinder) -> dict[str, object]:
         return {
-            "job_number": row.job_number,
+            "cylinder_number": row.cylinder_number,
             "company_id": str(row.company_id),
             "product_name": row.product_name,
             "cylinder_count": row.cylinder_count,
@@ -561,9 +564,9 @@ class JobService:
             "status": row.status,
         }
 
-    async def _related_documents(self, row: Job) -> list[RelatedDocumentRef]:
+    async def _related_documents(self, row: Cylinder) -> list[RelatedDocumentRef]:
         related: list[RelatedDocumentRef] = []
-        cylinder_return = await self.returns_repo.get_by_job(row.id)
+        cylinder_return = await self.returns_repo.get_by_cylinder(row.id)
         if cylinder_return is not None:
             related.append(
                 RelatedDocumentRef(
@@ -578,11 +581,11 @@ class JobService:
 
     async def _to_response(
         self,
-        row: Job,
+        row: Cylinder,
         *,
         permissions: frozenset[str],
         include_children: bool,
-    ) -> JobResponse:
+    ) -> CylinderResponse:
         company_names = await self._company_names({row.company_id})
         cylinders = await load_cylinders(self.session, row.id) if include_children else []
         colors = await load_colors(self.session, row.id) if include_children else []
@@ -595,19 +598,19 @@ class JobService:
         }
         user_names = await self._user_names(user_ids)
         can_view_price = self._can_view_price(permissions)
-        job_image = (
-            self._file_meta(row, "job_image")
-            if has_permission(permissions, JOB_IMAGE_READ)
+        cylinder_image = (
+            self._file_meta(row, "cylinder_image")
+            if has_permission(permissions, CYLINDER_IMAGE_READ)
             else None
         )
         challan = (
             self._file_meta(row, "challan")
-            if has_permission(permissions, JOB_CHALLAN_READ)
+            if has_permission(permissions, CYLINDER_CHALLAN_READ)
             else None
         )
-        return JobResponse(
+        return CylinderResponse(
             id=row.id,
-            job_number=row.job_number,
+            cylinder_number=row.cylinder_number,
             company_id=row.company_id,
             company_name=company_names.get(row.company_id, ""),
             product_name=row.product_name,
@@ -617,11 +620,11 @@ class JobService:
             cylinder_cost=row.cylinder_cost if can_view_price else None,
             cylinder_location=row.cylinder_location,
             remarks=row.remarks,
-            status=JobStatus(row.status),
+            status=CylinderStatus(row.status),
             cylinders=cylinders,
             colors=colors,
             pauses=[
-                JobPauseResponse(
+                CylinderPauseResponse(
                     id=p.id,
                     paused_at=p.paused_at,
                     paused_by=p.paused_by,
@@ -634,7 +637,7 @@ class JobService:
                 )
                 for p in pauses
             ],
-            job_image=job_image,
+            cylinder_image=cylinder_image,
             challan=challan,
             related_documents=await self._related_documents(row),
             created_at=row.created_at,
@@ -642,45 +645,45 @@ class JobService:
         )
 
     @staticmethod
-    def _slot_storage_key(row: Job, slot: str) -> str | None:
-        if slot == "job_image":
-            return row.job_image_storage_key
+    def _slot_storage_key(row: Cylinder, slot: str) -> str | None:
+        if slot == "cylinder_image":
+            return row.cylinder_image_storage_key
         return row.challan_storage_key
 
     @staticmethod
-    def _slot_filename(row: Job, slot: str) -> str | None:
-        if slot == "job_image":
-            return row.job_image_filename
+    def _slot_filename(row: Cylinder, slot: str) -> str | None:
+        if slot == "cylinder_image":
+            return row.cylinder_image_filename
         return row.challan_filename
 
     @staticmethod
-    def _slot_has_file(row: Job, slot: str) -> bool:
-        return bool(JobService._slot_storage_key(row, slot))
+    def _slot_has_file(row: Cylinder, slot: str) -> bool:
+        return bool(CylinderService._slot_storage_key(row, slot))
 
     @staticmethod
-    def _file_meta(row: Job, slot: str) -> JobFileMeta | None:
-        key = JobService._slot_storage_key(row, slot)
+    def _file_meta(row: Cylinder, slot: str) -> CylinderFileMeta | None:
+        key = CylinderService._slot_storage_key(row, slot)
         if not key:
             return None
-        if slot == "job_image":
-            return JobFileMeta(
-                filename=row.job_image_filename,
-                content_type=row.job_image_content_type,
-                size_bytes=row.job_image_size_bytes,
+        if slot == "cylinder_image":
+            return CylinderFileMeta(
+                filename=row.cylinder_image_filename,
+                content_type=row.cylinder_image_content_type,
+                size_bytes=row.cylinder_image_size_bytes,
             )
-        return JobFileMeta(
+        return CylinderFileMeta(
             filename=row.challan_filename,
             content_type=row.challan_content_type,
             size_bytes=row.challan_size_bytes,
         )
 
     @staticmethod
-    def _set_slot(row: Job, slot: str, key: str, validated: Any) -> None:
-        if slot == "job_image":
-            row.job_image_storage_key = key
-            row.job_image_filename = validated.filename
-            row.job_image_content_type = validated.content_type
-            row.job_image_size_bytes = validated.size_bytes
+    def _set_slot(row: Cylinder, slot: str, key: str, validated: Any) -> None:
+        if slot == "cylinder_image":
+            row.cylinder_image_storage_key = key
+            row.cylinder_image_filename = validated.filename
+            row.cylinder_image_content_type = validated.content_type
+            row.cylinder_image_size_bytes = validated.size_bytes
             return
         row.challan_storage_key = key
         row.challan_filename = validated.filename
@@ -688,12 +691,12 @@ class JobService:
         row.challan_size_bytes = validated.size_bytes
 
     @staticmethod
-    def _clear_slot(row: Job, slot: str) -> None:
-        if slot == "job_image":
-            row.job_image_storage_key = None
-            row.job_image_filename = None
-            row.job_image_content_type = None
-            row.job_image_size_bytes = None
+    def _clear_slot(row: Cylinder, slot: str) -> None:
+        if slot == "cylinder_image":
+            row.cylinder_image_storage_key = None
+            row.cylinder_image_filename = None
+            row.cylinder_image_content_type = None
+            row.cylinder_image_size_bytes = None
             return
         row.challan_storage_key = None
         row.challan_filename = None

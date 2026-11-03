@@ -11,25 +11,26 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator, model_valida
 
 from app.common.schemas.filters import BaseFilter
 from app.common.schemas.related_documents import RelatedDocumentRef
-from app.core.enums import JobStatus
+from app.common.utils.validators import normalize_required_text
+from app.core.enums import CylinderStatus
 
 
-class JobCylinderInput(BaseModel):
+class CylinderSizeInput(BaseModel):
     width: Decimal = Field(gt=0)
     circumference: Decimal = Field(gt=0)
 
 
-class JobColorInput(BaseModel):
+class CylinderColorInput(BaseModel):
     name: str = Field(min_length=1, max_length=100)
 
 
-class JobFileMeta(BaseModel):
+class CylinderFileMeta(BaseModel):
     filename: str | None = None
     content_type: str | None = None
     size_bytes: int | None = None
 
 
-class JobCylinderResponse(BaseModel):
+class CylinderSizeResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
     position: int
@@ -37,14 +38,14 @@ class JobCylinderResponse(BaseModel):
     circumference: Decimal
 
 
-class JobColorResponse(BaseModel):
+class CylinderColorResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
     position: int
     name: str
 
 
-class JobPauseResponse(BaseModel):
+class CylinderPauseResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
     id: UUID
@@ -58,47 +59,59 @@ class JobPauseResponse(BaseModel):
     resume_remarks: str | None
 
 
-class JobCreate(BaseModel):
+class CylinderCreate(BaseModel):
     company_id: UUID
     product_name: str = Field(min_length=1, max_length=200)
     cylinder_count: int = Field(ge=1, le=50)
-    cylinders: list[JobCylinderInput]
+    cylinders: list[CylinderSizeInput]
     color_count: int | None = Field(default=None, ge=0, le=50)
-    colors: list[JobColorInput] = Field(default_factory=list)
-    pet_size: str | None = Field(default=None, max_length=100)
+    colors: list[CylinderColorInput] = Field(default_factory=list)
+    pet_size: str = Field(min_length=1, max_length=100)
     cylinder_cost: Decimal | None = Field(default=None, ge=0)
     cylinder_location: str | None = Field(default=None, max_length=200)
     remarks: str | None = None
-    status: JobStatus = JobStatus.ACTIVE
+    status: CylinderStatus = CylinderStatus.ACTIVE
+
+    @field_validator("pet_size")
+    @classmethod
+    def normalize_pet_size(cls, value: str) -> str:
+        return normalize_required_text(value, field_name="pet_size")
 
     @model_validator(mode="after")
-    def validate_children(self) -> JobCreate:
+    def validate_children(self) -> CylinderCreate:
         if len(self.cylinders) != self.cylinder_count:
             raise ValueError("cylinders length must match cylinder_count")
         count = self.color_count if self.color_count is not None else len(self.colors)
         if self.color_count is not None and len(self.colors) != count:
             raise ValueError("colors length must match color_count")
-        if self.status in (JobStatus.RETURNED, JobStatus.PAUSED, JobStatus.RESUMED):
-            raise ValueError("status cannot be set to RETURNED, PAUSED, or RESUMED on create")
+        if self.status in (CylinderStatus.RETURNED, CylinderStatus.PAUSED):
+            raise ValueError("status cannot be set to RETURNED or PAUSED on create")
         return self
 
 
-class JobUpdate(BaseModel):
+class CylinderUpdate(BaseModel):
     company_id: UUID | None = None
     product_name: str | None = Field(default=None, min_length=1, max_length=200)
     cylinder_count: int | None = Field(default=None, ge=1, le=50)
-    cylinders: list[JobCylinderInput] | None = None
+    cylinders: list[CylinderSizeInput] | None = None
     color_count: int | None = Field(default=None, ge=0, le=50)
-    colors: list[JobColorInput] | None = None
-    pet_size: str | None = Field(default=None, max_length=100)
+    colors: list[CylinderColorInput] | None = None
+    pet_size: str | None = Field(default=None, min_length=1, max_length=100)
     cylinder_cost: Decimal | None = None
     cylinder_location: str | None = Field(default=None, max_length=200)
     remarks: str | None = None
-    status: JobStatus | None = None
+    status: CylinderStatus | None = None
+
+    @field_validator("pet_size")
+    @classmethod
+    def normalize_pet_size(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        return normalize_required_text(value, field_name="pet_size")
 
     @model_validator(mode="after")
-    def validate_children(self) -> JobUpdate:
-        if self.status in (JobStatus.RETURNED, JobStatus.PAUSED):
+    def validate_children(self) -> CylinderUpdate:
+        if self.status in (CylinderStatus.RETURNED, CylinderStatus.PAUSED):
             raise ValueError("status cannot be set to RETURNED or PAUSED via update")
         if self.cylinder_count is not None and self.cylinders is not None:
             if len(self.cylinders) != self.cylinder_count:
@@ -109,21 +122,21 @@ class JobUpdate(BaseModel):
         return self
 
 
-class JobFilter(BaseFilter):
+class CylinderFilter(BaseFilter):
     allowed_sort_fields: ClassVar[frozenset[str]] = frozenset(
-        {"created_at", "updated_at", "job_number", "product_name", "status"}
+        {"created_at", "updated_at", "cylinder_number", "product_name", "status"}
     )
 
-    status: JobStatus | None = None
+    status: CylinderStatus | None = None
     company_id: UUID | None = None
     include_closed: bool = False
 
 
-class JobListItem(BaseModel):
+class CylinderListItem(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
     id: UUID
-    job_number: str
+    cylinder_number: str
     company_id: UUID
     company_name: str
     product_name: str
@@ -132,16 +145,17 @@ class JobListItem(BaseModel):
     pet_size: str | None
     cylinder_cost: Decimal | None = None
     cylinder_location: str | None
-    status: JobStatus
+    status: CylinderStatus
+    cylinder_image: CylinderFileMeta | None = None
     created_at: datetime
     updated_at: datetime
 
 
-class JobResponse(BaseModel):
+class CylinderResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
     id: UUID
-    job_number: str
+    cylinder_number: str
     company_id: UUID
     company_name: str
     product_name: str
@@ -151,27 +165,27 @@ class JobResponse(BaseModel):
     cylinder_cost: Decimal | None = None
     cylinder_location: str | None
     remarks: str | None
-    status: JobStatus
-    cylinders: list[JobCylinderResponse]
-    colors: list[JobColorResponse]
-    pauses: list[JobPauseResponse] = Field(default_factory=list)
-    job_image: JobFileMeta | None = None
-    challan: JobFileMeta | None = None
+    status: CylinderStatus
+    cylinders: list[CylinderSizeResponse]
+    colors: list[CylinderColorResponse]
+    pauses: list[CylinderPauseResponse] = Field(default_factory=list)
+    cylinder_image: CylinderFileMeta | None = None
+    challan: CylinderFileMeta | None = None
     related_documents: list[RelatedDocumentRef] = Field(default_factory=list)
     created_at: datetime
     updated_at: datetime
 
 
-class JobPauseRequest(BaseModel):
+class CylinderPauseRequest(BaseModel):
     pause_remarks: str | None = None
 
 
-class JobResumeRequest(BaseModel):
+class CylinderResumeRequest(BaseModel):
     resume_remarks: str | None = None
 
 
 class CylinderReturnCreate(BaseModel):
-    job_id: UUID
+    cylinder_id: UUID
     company_id: UUID
     remarks: str | None = None
 
@@ -187,7 +201,7 @@ class CylinderReturnFilter(BaseFilter):
     )
 
     company_id: UUID | None = None
-    job_id: UUID | None = None
+    cylinder_id: UUID | None = None
 
 
 class CylinderReturnResponse(BaseModel):
@@ -195,14 +209,18 @@ class CylinderReturnResponse(BaseModel):
 
     id: UUID
     return_number: str
-    job_id: UUID
-    job_number: str
+    cylinder_id: UUID
+    cylinder_number: str
     company_id: UUID
     company_name: str
+    company_gst_number: str | None = None
+    company_address: str | None = None
+    product_name: str
+    cylinder_count: int
     remarks: str | None
     related_documents: list[RelatedDocumentRef] = Field(default_factory=list)
     created_at: datetime
     updated_at: datetime
 
 
-JOB_FILE_SLOTS = frozenset({"job_image", "challan"})
+CYLINDER_FILE_SLOTS = frozenset({"cylinder_image", "challan"})

@@ -8,29 +8,31 @@ from decimal import Decimal
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.permissions import has_permission
-from app.inventory.catalog import JOB_VIEW_PRICE, MATERIAL_VIEW_PRICE
+from app.inventory.catalog import CYLINDER_VIEW_PRICE, MATERIAL_VIEW_PRICE
 from app.inventory.dashboard.repository import DashboardRepository
 from app.inventory.pricing import valuation_unit_price
 from app.inventory.repository import MovementRepository
 from app.inventory.dashboard.schemas import (
     DashboardRange,
-    JobActivityBucket,
-    JobStatusCount,
-    JobsDashboard,
-    JobsDashboardKpis,
+    CylinderActivityBucket,
+    CylinderStatusCount,
+    CylindersDashboard,
+    CylindersDashboardKpis,
+    DeadStockItem,
     MaterialsDashboard,
     MaterialsDashboardKpis,
     MovementActivityBucket,
-    OpenJobPause,
+    OpenCylinderPause,
     ReorderWatchItem,
     StockByProduct,
-    TopCompanyJobs,
+    TopCompanyCylinders,
     TopConsumedSku,
 )
 
 
 class DashboardService:
     _DISPLAY_QUANTUM = Decimal("0.01")
+    _DEAD_STOCK_IDLE_DAYS = 60
 
     def __init__(self, session: AsyncSession) -> None:
         self.session = session
@@ -67,15 +69,15 @@ class DashboardService:
         span = (end - start).days + 1
         return start, end, span > 31
 
-    async def jobs_overview(
+    async def cylinders_overview(
         self,
         *,
         range_params: DashboardRange,
         permissions: frozenset[str],
-    ) -> JobsDashboard:
+    ) -> CylindersDashboard:
         date_from, date_to, weekly = self._resolve_range(range_params)
         active, paused, cylinders, awaiting, cost_total = await self.repo.job_kpi_counts()
-        can_view_price = has_permission(permissions, JOB_VIEW_PRICE)
+        can_view_price = has_permission(permissions, CYLINDER_VIEW_PRICE)
 
         status_rows = await self.repo.job_status_counts()
         buckets = await self.repo.job_activity_buckets(
@@ -83,11 +85,11 @@ class DashboardService:
             date_to=date_to,
             weekly=weekly,
         )
-        companies = await self.repo.top_companies_by_active_jobs(limit=5)
+        companies = await self.repo.top_companies_by_active_cylinders(limit=5)
         pauses = await self.repo.longest_open_pauses(limit=5)
 
         now = datetime.now(timezone.utc)
-        open_pauses: list[OpenJobPause] = []
+        open_pauses: list[OpenCylinderPause] = []
         for job, company_name, pause in pauses:
             paused_at = pause.paused_at
             if paused_at.tzinfo is None:
@@ -95,41 +97,41 @@ class DashboardService:
             delta = now - paused_at
             days_paused = max(delta.days, 0)
             open_pauses.append(
-                OpenJobPause(
-                    job_id=str(job.id),
-                    job_number=job.job_number,
+                OpenCylinderPause(
+                    cylinder_id=str(job.id),
+                    cylinder_number=job.cylinder_number,
                     company_name=company_name,
                     paused_at=pause.paused_at,
                     days_paused=days_paused,
                 )
             )
 
-        return JobsDashboard(
+        return CylindersDashboard(
             date_from=date_from,
             date_to=date_to,
-            kpis=JobsDashboardKpis(
-                active_jobs=active,
-                paused_jobs=paused,
+            kpis=CylindersDashboardKpis(
+                active_cylinders=active,
+                paused_cylinders=paused,
                 cylinders_in_circulation=cylinders,
                 awaiting_return=awaiting,
                 cylinder_cost_exposure=self._quantize(cost_total) if can_view_price else None,
             ),
             status_breakdown=[
-                JobStatusCount(status=status, count=count) for status, count in status_rows
+                CylinderStatusCount(status=status, count=count) for status, count in status_rows
             ],
             activity_buckets=[
-                JobActivityBucket(
+                CylinderActivityBucket(
                     bucket_start=bucket,
-                    jobs_created=jobs_created,
+                    cylinders_created=cylinders_created,
                     returns_created=returns_created,
                 )
-                for bucket, jobs_created, returns_created in buckets
+                for bucket, cylinders_created, returns_created in buckets
             ],
             top_companies=[
-                TopCompanyJobs(
+                TopCompanyCylinders(
                     company_id=str(company_id),
                     company_name=name,
-                    active_jobs=job_count,
+                    active_cylinders=job_count,
                     cylinder_count=cylinder_count,
                 )
                 for company_id, name, job_count, cylinder_count in companies
@@ -205,6 +207,24 @@ class DashboardService:
                 )
             )
 
+        today = date.today()
+        dead_stock_rows = await self.repo.list_dead_stock_skus(
+            as_of=today,
+            idle_days=self._DEAD_STOCK_IDLE_DAYS,
+        )
+        dead_stock: list[DeadStockItem] = []
+        for material_id, name, total, last_activity in dead_stock_rows:
+            days_idle = (today - last_activity).days
+            dead_stock.append(
+                DeadStockItem(
+                    material_id=str(material_id),
+                    name=name,
+                    total_kg=self._quantize(total),
+                    days_idle=days_idle,
+                    last_activity_date=last_activity,
+                )
+            )
+
         return MaterialsDashboard(
             date_from=date_from,
             date_to=date_to,
@@ -214,6 +234,7 @@ class DashboardService:
                 out_of_stock_skus=out_of_stock,
                 stock_value=stock_value,
                 valued_sku_count=valued_count if can_view_price else 0,
+                dead_stock_skus=len(dead_stock),
             ),
             movement_buckets=[
                 MovementActivityBucket(
@@ -229,4 +250,5 @@ class DashboardService:
             ],
             reorder_watchlist=reorder,
             top_consumed=top_consumed,
+            dead_stock=dead_stock,
         )
