@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import uuid
+from collections.abc import Mapping
 from datetime import date
 from decimal import Decimal, ROUND_HALF_UP
 from uuid import UUID
@@ -34,7 +35,8 @@ from app.core.exceptions import (
 )
 from app.core.permissions import has_permission
 from app.db.session import transaction
-from app.identity.models import Company
+from app.identity.models import Company, User
+from app.identity.schemas import AuditLogUserSummary
 from app.integrations.storage import get_optional_storage
 from app.inventory.catalog import (
     INK_IMAGE_CREATE,
@@ -74,7 +76,9 @@ from app.inventory.inks.schemas import (
     InkStockOutCreate,
 )
 from app.inventory.models import InventoryUnit
+from app.inventory.pricing import compute_avg_price
 from app.inventory.repository import UnitRepository
+from app.inventory.schemas import DrumLineHistoryEntry, DrumLineHistorySummary
 
 INK_ALLOWED_MIME = (MIME_JPEG, MIME_PNG, MIME_WEBP, MIME_PDF)
 
@@ -143,30 +147,73 @@ class InkService:
         )
         return {row.id: row for row in result.scalars().all()}
 
-    async def _line_response(self, line: InkLine, *, can_view_price: bool) -> InkLineResponse:
+    async def _avg_prices_by_line_ids(
+        self,
+        line_ids: list[UUID],
+    ) -> dict[UUID, Decimal | None]:
+        unique = list(dict.fromkeys(line_ids))
+        if not unique:
+            return {}
+        stats_map = await self.movements.purchase_price_stats_by_line_ids(unique)
+        return {
+            line_id: self._display_decimal(compute_avg_price(stats_map.get(line_id)))
+            for line_id in unique
+        }
+
+    async def _line_response(
+        self,
+        line: InkLine,
+        *,
+        can_view_price: bool,
+        avg_prices: Mapping[UUID, Decimal | None] | None = None,
+    ) -> InkLineResponse:
         brand = await self.brands.get(line.brand_id)
         color = await self.colors.get(line.color_id)
         units = await self._load_unit_codes([line.drum_unit_id])
         unit = units.get(line.drum_unit_id)
+        unit_code = unit.code if unit else ""
         ink_rate = self._display_decimal(line.ink_rate) if can_view_price else None
         total_rate = self._display_decimal(line.total_rate) if can_view_price else None
+        avg_price: Decimal | None = None
+        if can_view_price:
+            if avg_prices is not None:
+                avg_price = avg_prices.get(line.id)
+            else:
+                avg_map = await self._avg_prices_by_line_ids([line.id])
+                avg_price = avg_map.get(line.id)
         return InkLineResponse(
             id=line.id,
             brand_id=line.brand_id,
             brand_name=brand.name if brand else "",
             color_id=line.color_id,
             color_name=color.name if color else "",
-            hex_code=color.hex_code if color else None,
+            hex_code=color.hex_code if color else "",
             drum_count=self._display_decimal(line.drum_count) or Decimal("0"),
             drum_qty=self._display_decimal(line.drum_qty) or Decimal("0"),
             drum_unit_id=line.drum_unit_id,
-            drum_unit_code=unit.code if unit else "",
+            drum_unit_code=unit_code,
             total_qty=self._display_decimal(line.total_qty) or Decimal("0"),
             ink_rate=ink_rate,
             total_rate=total_rate,
+            avg_price_per_unit=avg_price,
+            price_unit_code=unit_code if avg_price is not None else None,
             created_at=line.created_at,
             updated_at=line.updated_at,
         )
+
+    async def _line_responses(
+        self,
+        line_rows: list[InkLine],
+        *,
+        can_view_price: bool,
+    ) -> list[InkLineResponse]:
+        avg_map: dict[UUID, Decimal | None] = {}
+        if can_view_price and line_rows:
+            avg_map = await self._avg_prices_by_line_ids([row.id for row in line_rows])
+        return [
+            await self._line_response(row, can_view_price=can_view_price, avg_prices=avg_map)
+            for row in line_rows
+        ]
 
     def _file_meta(self, sheet: InkSheet, slot: str) -> InkFileMeta | None:
         if slot == "product_image":
@@ -188,7 +235,7 @@ class InkService:
     async def _sheet_response(self, sheet: InkSheet, *, can_view_price: bool) -> InkSheetResponse:
         company = await self._require_company(sheet.company_id)
         line_rows = await self.lines.list_for_sheet(sheet.id)
-        lines = [await self._line_response(row, can_view_price=can_view_price) for row in line_rows]
+        lines = await self._line_responses(line_rows, can_view_price=can_view_price)
         return InkSheetResponse(
             id=sheet.id,
             company_id=sheet.company_id,
@@ -279,6 +326,110 @@ class InkService:
             page=page,
         )
 
+    async def _line_history_context(
+        self,
+        line_id: UUID,
+    ) -> tuple[InkLine, InkSheet, Company, str, str, str]:
+        line = await self.lines.get(line_id)
+        if line is None:
+            raise ResourceNotFoundError("Ink line not found")
+        sheet = await self.sheets.get(line.ink_sheet_id)
+        if sheet is None:
+            raise ResourceNotFoundError("Ink sheet not found")
+        company = await self._require_company(sheet.company_id)
+        brand = await self.brands.get(line.brand_id)
+        color = await self.colors.get(line.color_id)
+        units = await self._load_unit_codes([line.drum_unit_id])
+        unit_row = units.get(line.drum_unit_id)
+        return (
+            line,
+            sheet,
+            company,
+            brand.name if brand else "",
+            color.name if color else "",
+            unit_row.code if unit_row else "",
+        )
+
+    async def line_history(
+        self,
+        line_id: UUID,
+        *,
+        page: PageParams,
+        permissions: frozenset[str],
+    ) -> tuple[list[DrumLineHistoryEntry], int]:
+        _line, sheet, company, _brand, _color, unit_code = await self._line_history_context(line_id)
+        can_view_price = self._can_view_price(permissions)
+        movements, total = await self.movements.list_for_line(line_id, page=page)
+        user_ids = [uid for uid in (m.created_by for m in movements) if uid is not None]
+        users_by_id: dict[UUID, User] = {}
+        for user_id in dict.fromkeys(user_ids):
+            user = await self.session.get(User, user_id)
+            if user is not None:
+                users_by_id[user_id] = user
+
+        entries: list[DrumLineHistoryEntry] = []
+        for movement in movements:
+            user = None
+            if movement.created_by and movement.created_by in users_by_id:
+                actor = users_by_id[movement.created_by]
+                user = AuditLogUserSummary(id=actor.id, name=actor.name)
+            rate = self._display_decimal(movement.ink_rate) if can_view_price else None
+            entries.append(
+                DrumLineHistoryEntry(
+                    id=movement.id,
+                    timestamp=movement.created_at,
+                    action=movement.direction,
+                    user=user,
+                    company_id=sheet.company_id,
+                    company_name=company.name,
+                    drums=self._display_decimal(movement.drums),
+                    quantity=self._display_decimal(movement.quantity),
+                    quantity_unit_code=unit_code or None,
+                    price_per_unit=rate,
+                    price_unit_code=unit_code or None if rate is not None else None,
+                    note=movement.note,
+                ),
+            )
+        return entries, total
+
+    async def line_history_summary(
+        self,
+        line_id: UUID,
+        *,
+        permissions: frozenset[str],
+    ) -> DrumLineHistorySummary:
+        line, sheet, company, brand_name, color_name, unit_code = await self._line_history_context(line_id)
+        can_view_price = self._can_view_price(permissions)
+        last_in = await self.movements.last_stock_in(line_id)
+        last_price = None
+        last_date = None
+        last_drums = None
+        price_unit_code = unit_code or None
+        if last_in is not None:
+            last_date = last_in.movement_date
+            last_drums = self._display_decimal(last_in.drums)
+            if can_view_price:
+                last_price = self._display_decimal(last_in.ink_rate)
+        stats_map = await self.movements.purchase_price_stats_by_line_ids([line_id])
+        avg_price = self._display_decimal(compute_avg_price(stats_map.get(line_id)))
+        return DrumLineHistorySummary(
+            line_id=line.id,
+            sheet_id=sheet.id,
+            company_id=company.id,
+            company_name=company.name,
+            brand_name=brand_name,
+            line_label=color_name,
+            drums_on_hand=self._display_decimal(line.drum_count) or Decimal("0"),
+            total_qty=self._display_decimal(line.total_qty) or Decimal("0"),
+            quantity_unit_code=unit_code,
+            last_purchase_price=last_price,
+            last_purchase_price_unit_code=price_unit_code if last_price is not None else None,
+            last_purchase_date=last_date,
+            last_purchase_drums=last_drums,
+            avg_price_per_unit=avg_price if can_view_price else None,
+            price_unit_code=price_unit_code if can_view_price and avg_price is not None else None,
+        )
+
     async def create_color(
         self,
         payload: InkColorCreate,
@@ -363,6 +514,11 @@ class InkService:
             raise ResourceNotFoundError("Ink color not found")
         can_view_price = self._can_view_price(permissions)
         line_rows = await self.lines.list_for_color(color_id)
+        avg_map = (
+            await self._avg_prices_by_line_ids([line.id for line in line_rows])
+            if can_view_price
+            else {}
+        )
         companies_with_stock: set[UUID] = set()
         usage_lines: list[InkColorUsageLine] = []
         for line in line_rows:
@@ -373,10 +529,12 @@ class InkService:
             brand = await self.brands.get(line.brand_id)
             units = await self._load_unit_codes([line.drum_unit_id])
             unit = units.get(line.drum_unit_id)
+            unit_code = unit.code if unit else ""
             drums = line.drum_count or Decimal("0")
             qty = line.total_qty or Decimal("0")
             if drums > 0 or qty > 0:
                 companies_with_stock.add(sheet.company_id)
+            avg_price = avg_map.get(line.id) if can_view_price else None
             usage_lines.append(
                 InkColorUsageLine(
                     ink_line_id=line.id,
@@ -387,10 +545,12 @@ class InkService:
                     brand_name=brand.name if brand else "",
                     drum_count=self._display_decimal(drums) or Decimal("0"),
                     drum_qty=self._display_decimal(line.drum_qty) or Decimal("0"),
-                    drum_unit_code=unit.code if unit else "",
+                    drum_unit_code=unit_code,
                     total_qty=self._display_decimal(qty) or Decimal("0"),
                     ink_rate=self._display_decimal(line.ink_rate) if can_view_price else None,
                     total_rate=self._display_decimal(line.total_rate) if can_view_price else None,
+                    avg_price_per_unit=avg_price,
+                    price_unit_code=unit_code if avg_price is not None else None,
                 )
             )
         return InkColorUsageResponse(
@@ -413,6 +573,12 @@ class InkService:
             filters["is_active"] = is_active
         rows, total = await self.brands.list(page=page, common_filter=common_filter, filters=filters or None)
         return [InkBrandResponse.model_validate(row) for row in rows], total
+
+    async def get_brand(self, brand_id: UUID) -> InkBrandResponse:
+        row = await self.brands.get(brand_id)
+        if row is None:
+            raise ResourceNotFoundError("Ink brand not found")
+        return InkBrandResponse.model_validate(row)
 
     async def create_brand(self, payload: InkBrandCreate) -> InkBrandResponse:
         async with transaction(self.session):
@@ -458,6 +624,7 @@ class InkService:
             company_id=company_id,
         )
         can_view_price = self._can_view_price(permissions)
+        avg_map = await self._avg_prices_by_line_ids([line.id for line in line_rows]) if can_view_price else {}
         sheet_cache: dict[UUID, InkSheet] = {}
         company_cache: dict[UUID, Company] = {}
         items: list[InkLineListItem] = []
@@ -472,7 +639,11 @@ class InkService:
             if company is None:
                 company = await self._require_company(sheet.company_id)
                 company_cache[sheet.company_id] = company
-            line_resp = await self._line_response(line, can_view_price=can_view_price)
+            line_resp = await self._line_response(
+                line,
+                can_view_price=can_view_price,
+                avg_prices=avg_map,
+            )
             items.append(
                 InkLineListItem(
                     ink_sheet_id=sheet.id,
@@ -529,13 +700,31 @@ class InkService:
     ) -> InkSheetResponse:
         await self._require_company(payload.company_id)
         existing = await self.sheets.get_by_company(payload.company_id)
-        if existing is not None:
-            raise DuplicateResourceError(
-                "An ink sheet already exists for this company",
-                details={"existing_id": str(existing.id)},
-            )
         can_view_price = self._can_view_price(permissions)
         async with transaction(self.session):
+            if existing is not None:
+                await self.sheets.update(existing.id, {"updated_by": actor_user_id})
+                if payload.lines:
+                    await self._sync_lines(
+                        existing,
+                        payload.lines,
+                        actor_user_id=actor_user_id,
+                        can_view_price=can_view_price,
+                        is_create=True,
+                    )
+                refreshed = await self.sheets.get(existing.id)
+                assert refreshed is not None
+                new_snapshot = await self._sheet_audit_snapshot(refreshed)
+                await self.audit.write(
+                    user_id=actor_user_id,
+                    action=AuditAction.UPDATE,
+                    module=INVENTORY_MODULE,
+                    entity_type="ink_sheet",
+                    entity_id=refreshed.id,
+                    new_values=new_snapshot,
+                )
+                return await self._sheet_response(refreshed, can_view_price=can_view_price)
+
             sheet = await self.sheets.create(
                 {"company_id": payload.company_id, "created_by": actor_user_id, "updated_by": actor_user_id}
             )
@@ -618,6 +807,63 @@ class InkService:
             )
             return await self._sheet_response(deleted, can_view_price=True)
 
+    @staticmethod
+    def _find_line_by_brand_color(
+        lines: list[InkLine],
+        brand_id: UUID,
+        color_id: UUID,
+    ) -> InkLine | None:
+        for line in lines:
+            if line.brand_id == brand_id and line.color_id == color_id:
+                return line
+        return None
+
+    async def _increment_ink_line(
+        self,
+        line: InkLine,
+        item: InkLineUpsert,
+        *,
+        drum_unit_id: UUID,
+        incoming_qty: Decimal,
+        actor_user_id: UUID,
+        today: date,
+    ) -> InkLine:
+        old_drums = line.drum_count or Decimal("0")
+        old_qty = line.total_qty or Decimal("0")
+        add_drums = item.drum_count or Decimal("0")
+        add_qty = incoming_qty
+        new_drums = old_drums + add_drums
+        new_qty = old_qty + add_qty
+        rate = item.ink_rate if item.ink_rate is not None else line.ink_rate
+        _, total_rate = self._line_totals(new_drums, item.drum_qty, rate)
+        if add_drums > 0 or add_qty > 0:
+            await self.movements.create(
+                {
+                    "ink_line_id": line.id,
+                    "movement_date": today,
+                    "direction": MaterialMovementDirection.IN.value,
+                    "drums": add_drums,
+                    "quantity": add_qty,
+                    "created_by": actor_user_id,
+                    "ink_rate": item.ink_rate,
+                }
+            )
+        updated = await self.lines.update(
+            line.id,
+            {
+                "brand_id": item.brand_id,
+                "color_id": item.color_id,
+                "drum_count": new_drums,
+                "drum_qty": item.drum_qty,
+                "drum_unit_id": drum_unit_id,
+                "total_qty": new_qty,
+                "ink_rate": rate,
+                "total_rate": total_rate,
+            },
+        )
+        assert updated is not None
+        return updated
+
     async def _sync_lines(
         self,
         sheet: InkSheet,
@@ -629,6 +875,7 @@ class InkService:
     ) -> None:
         default_unit = await self._default_kg_unit_id()
         existing = {row.id: row for row in await self.lines.list_for_sheet(sheet.id)}
+        sheet_lines = list(existing.values())
         seen_ids: set[UUID] = set()
         today = date.today()
 
@@ -642,6 +889,20 @@ class InkService:
             total_qty, total_rate = self._line_totals(item.drum_count, item.drum_qty, item.ink_rate)
 
             if item.id is None:
+                matched = self._find_line_by_brand_color(sheet_lines, item.brand_id, item.color_id)
+                if matched is not None:
+                    updated = await self._increment_ink_line(
+                        matched,
+                        item,
+                        drum_unit_id=drum_unit_id,
+                        incoming_qty=total_qty,
+                        actor_user_id=actor_user_id,
+                        today=today,
+                    )
+                    existing[updated.id] = updated
+                    sheet_lines = list(existing.values())
+                    seen_ids.add(updated.id)
+                    continue
                 try:
                     line = await self.lines.create(
                         {
@@ -657,9 +918,30 @@ class InkService:
                         }
                     )
                 except IntegrityError as exc:
-                    raise DuplicateResourceError(
-                        "This brand and color combination already exists on the sheet"
-                    ) from exc
+                    raced = self._find_line_by_brand_color(
+                        await self.lines.list_for_sheet(sheet.id),
+                        item.brand_id,
+                        item.color_id,
+                    )
+                    if raced is None:
+                        raise DuplicateResourceError(
+                            "This brand and color combination already exists on the sheet"
+                        ) from exc
+                    updated = await self._increment_ink_line(
+                        raced,
+                        item,
+                        drum_unit_id=drum_unit_id,
+                        incoming_qty=total_qty,
+                        actor_user_id=actor_user_id,
+                        today=today,
+                    )
+                    existing[updated.id] = updated
+                    sheet_lines = list(existing.values())
+                    seen_ids.add(updated.id)
+                    continue
+                existing[line.id] = line
+                sheet_lines = list(existing.values())
+                seen_ids.add(line.id)
                 await self.movements.create(
                     {
                         "ink_line_id": line.id,
@@ -914,7 +1196,11 @@ class InkService:
             if sheet is None:
                 raise ResourceNotFoundError("Ink sheet not found")
             if self.storage is not None:
-                await self.storage.put(new_key, validated.content, validated.content_type)
+                await self.storage.upload(
+                    key=new_key,
+                    body=validated.content,
+                    content_type=validated.content_type,
+                )
             else:
                 ink_storage.write_ink_file(new_key, validated.content)
             old_key = self._slot_storage_key(sheet, slot)
@@ -929,7 +1215,7 @@ class InkService:
             await self.session.flush()
             if old_key and old_key != new_key:
                 if self.storage is not None:
-                    await self.storage.delete(old_key)
+                    await self.storage.delete(key=old_key)
                 else:
                     ink_storage.delete_ink_file(old_key)
             if actor_user_id is not None:
@@ -946,7 +1232,12 @@ class InkService:
                         "storage_key": new_key,
                     },
                 )
-        return await self._sheet_response(sheet, can_view_price=self._can_view_price(permissions))
+            refreshed = await self.sheets.get(sheet_id)
+            assert refreshed is not None
+            return await self._sheet_response(
+                refreshed,
+                can_view_price=self._can_view_price(permissions),
+            )
 
     async def read_file(
         self,
@@ -965,7 +1256,7 @@ class InkService:
         if not key:
             raise ResourceNotFoundError("File not found")
         if self.storage is not None:
-            return await self.storage.get(key)
+            return await self.storage.download(key=key)
         return ink_storage.read_ink_file(key)
 
     async def read_history_attachment(
@@ -998,7 +1289,7 @@ class InkService:
         if not key.startswith(prefix):
             raise ResourceNotFoundError("Attachment not found")
         if self.storage is not None:
-            return await self.storage.get(key)
+            return await self.storage.download(key=key)
         return ink_storage.read_ink_file(key)
 
     async def delete_file(
@@ -1023,7 +1314,7 @@ class InkService:
             self._clear_file_meta(sheet, slot)
             await self.session.flush()
             if key and self.storage is not None:
-                await self.storage.delete(key)
+                await self.storage.delete(key=key)
             elif key:
                 ink_storage.delete_ink_file(key)
             if actor_user_id is not None and key:
@@ -1041,7 +1332,9 @@ class InkService:
                         "deleted": True,
                     },
                 )
-        return await self._sheet_response(sheet, can_view_price=True)
+            refreshed = await self.sheets.get(sheet_id)
+            assert refreshed is not None
+            return await self._sheet_response(refreshed, can_view_price=True)
 
     @staticmethod
     def _slot_storage_key(row: InkSheet, slot: str) -> str | None:

@@ -59,6 +59,21 @@ INK_IMAGE_DELETE = build_permission(INVENTORY_MODULE, "ink_image", "delete")
 
 INKS_REPORT_READ = build_permission(INVENTORY_MODULE, "inks_report", "read")
 
+ADHESIVE_CODE_CREATE = build_permission(INVENTORY_MODULE, "adhesive_code", "create")
+ADHESIVE_CODE_READ = build_permission(INVENTORY_MODULE, "adhesive_code", "read")
+ADHESIVE_CODE_UPDATE = build_permission(INVENTORY_MODULE, "adhesive_code", "update")
+ADHESIVE_CODE_DELETE = build_permission(INVENTORY_MODULE, "adhesive_code", "delete")
+ADHESIVE_CODE_HISTORY = build_permission(INVENTORY_MODULE, "adhesive_code", "history")
+
+ADHESIVE_CREATE = build_permission(INVENTORY_MODULE, "adhesive", "create")
+ADHESIVE_READ = build_permission(INVENTORY_MODULE, "adhesive", "read")
+ADHESIVE_UPDATE = build_permission(INVENTORY_MODULE, "adhesive", "update")
+ADHESIVE_DELETE = build_permission(INVENTORY_MODULE, "adhesive", "delete")
+ADHESIVE_VIEW_PRICE = build_permission(INVENTORY_MODULE, "adhesive", "view_price")
+ADHESIVE_HISTORY = build_permission(INVENTORY_MODULE, "adhesive", "history")
+
+ADHESIVES_REPORT_READ = build_permission(INVENTORY_MODULE, "adhesives_report", "read")
+
 _CATALOG: dict[str, tuple[str, ...]] = {
     "unit": ("create", "read", "update", "delete"),
     "material": ("create", "read", "update", "delete", "view_price", "history"),
@@ -71,6 +86,9 @@ _CATALOG: dict[str, tuple[str, ...]] = {
     "ink": ("create", "read", "update", "delete", "view_price", "history"),
     "ink_image": ("create", "read", "update", "delete"),
     "inks_report": ("read",),
+    "adhesive_code": ("create", "read", "update", "delete", "history"),
+    "adhesive": ("create", "read", "update", "delete", "view_price", "history"),
+    "adhesives_report": ("read",),
 }
 
 

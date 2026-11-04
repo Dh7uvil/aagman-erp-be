@@ -195,6 +195,11 @@ TABLE_CATALOG: dict[str, TableCatalogEntry] = {
                     required_permission="inventory.ink.view_price",
                 ),
                 TableColumnSpec(
+                    "avg_price_per_unit",
+                    default_visible=False,
+                    required_permission="inventory.ink.view_price",
+                ),
+                TableColumnSpec(
                     "total_rate",
                     default_visible=False,
                     required_permission="inventory.ink.view_price",
@@ -206,6 +211,11 @@ TABLE_CATALOG: dict[str, TableCatalogEntry] = {
         _entry(
             "inventory.ink_colors",
             ("name", "hex", "active"),
+            *_hidden("created_at", "updated_at"),
+        ),
+        _entry(
+            "inventory.ink_brands",
+            ("name", "active"),
             *_hidden("created_at", "updated_at"),
         ),
         TableCatalogEntry(
@@ -233,16 +243,110 @@ TABLE_CATALOG: dict[str, TableCatalogEntry] = {
             columns=(
                 TableColumnSpec("company"),
                 TableColumnSpec("brand"),
-                TableColumnSpec("drums"),
-                TableColumnSpec("per_drum"),
+                TableColumnSpec("drum_count"),
+                TableColumnSpec("drum_qty", default_visible=False),
+                TableColumnSpec("unit", default_visible=False),
                 TableColumnSpec("total_qty"),
                 TableColumnSpec(
                     "ink_rate",
+                    default_visible=False,
+                    required_permission="inventory.ink.view_price",
+                ),
+                TableColumnSpec(
+                    "avg_price_per_unit",
+                    default_visible=False,
                     required_permission="inventory.ink.view_price",
                 ),
                 TableColumnSpec(
                     "total_rate",
+                    default_visible=False,
                     required_permission="inventory.ink.view_price",
+                ),
+                TableColumnSpec("sheet"),
+            ),
+        ),
+        TableCatalogEntry(
+            table_key="inventory.adhesives",
+            columns=(
+                TableColumnSpec("company"),
+                TableColumnSpec("brand"),
+                TableColumnSpec("code"),
+                TableColumnSpec("drum_count"),
+                TableColumnSpec("drum_qty", default_visible=False),
+                TableColumnSpec("unit", default_visible=False),
+                TableColumnSpec("total_qty"),
+                TableColumnSpec(
+                    "adhesive_rate",
+                    default_visible=False,
+                    required_permission="inventory.adhesive.view_price",
+                ),
+                TableColumnSpec(
+                    "avg_price_per_unit",
+                    default_visible=False,
+                    required_permission="inventory.adhesive.view_price",
+                ),
+                TableColumnSpec(
+                    "total_rate",
+                    default_visible=False,
+                    required_permission="inventory.adhesive.view_price",
+                ),
+                TableColumnSpec("created_at", default_visible=False),
+                TableColumnSpec("updated_at", default_visible=False),
+            ),
+        ),
+        _entry(
+            "inventory.adhesive_codes",
+            ("code", "active"),
+            *_hidden("created_at", "updated_at"),
+        ),
+        _entry(
+            "inventory.adhesive_brands",
+            ("name", "active"),
+            *_hidden("created_at", "updated_at"),
+        ),
+        TableCatalogEntry(
+            table_key="inventory.adhesives_report",
+            pinned_count=0,
+            columns=(
+                TableColumnSpec("company"),
+                TableColumnSpec("brand"),
+                TableColumnSpec("code"),
+                TableColumnSpec("in_drums"),
+                TableColumnSpec("in_qty"),
+                TableColumnSpec("out_drums"),
+                TableColumnSpec("out_qty"),
+                TableColumnSpec("closing_drums"),
+                TableColumnSpec("closing_qty"),
+                TableColumnSpec(
+                    "adhesive_rate",
+                    required_permission="inventory.adhesive.view_price",
+                ),
+            ),
+        ),
+        TableCatalogEntry(
+            table_key="inventory.adhesive_code_usage",
+            pinned_count=0,
+            columns=(
+                TableColumnSpec("company"),
+                TableColumnSpec("brand"),
+                TableColumnSpec("drum_count"),
+                TableColumnSpec("drum_qty", default_visible=False),
+                TableColumnSpec("unit", default_visible=False),
+                TableColumnSpec("total_qty"),
+                TableColumnSpec(
+                    "adhesive_rate",
+                    default_visible=False,
+                    required_permission="inventory.adhesive.view_price",
+                ),
+                TableColumnSpec(
+                    "avg_price_per_unit",
+                    default_visible=False,
+                    required_permission="inventory.adhesive.view_price",
+                ),
+                TableColumnSpec(
+                    "total_rate",
+                    default_visible=False,
+                    required_permission="inventory.adhesive.view_price",
                 ),
                 TableColumnSpec("sheet"),
             ),

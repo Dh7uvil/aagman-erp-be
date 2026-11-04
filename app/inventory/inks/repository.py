@@ -18,6 +18,7 @@ from app.core.enums import MaterialMovementDirection
 from app.core.exceptions import ValidationError
 from app.identity.models import Company
 from app.inventory.inks.models import InkBrand, InkColor, InkLine, InkMovement, InkSheet
+from app.inventory.pricing import PurchasePriceStats
 
 
 class InkColorRepository:
@@ -257,6 +258,88 @@ class InkMovementRepository:
 
     async def create(self, values: Mapping[str, object]) -> InkMovement:
         return await self._repo.create(values)
+
+    async def list_for_line(
+        self,
+        line_id: UUID,
+        *,
+        page: PageParams,
+    ) -> tuple[list[InkMovement], int]:
+        criteria = (
+            InkMovement.ink_line_id == line_id,
+            InkMovement.deleted_at.is_(None),
+            InkMovement.direction.in_(
+                (
+                    MaterialMovementDirection.IN.value,
+                    MaterialMovementDirection.OUT.value,
+                    MaterialMovementDirection.OPENING.value,
+                )
+            ),
+        )
+        total = await self.session.scalar(
+            select(func.count()).select_from(InkMovement).where(*criteria),
+        )
+        offset = (page.page - 1) * page.page_size
+        result = await self.session.execute(
+            select(InkMovement)
+            .where(*criteria)
+            .order_by(InkMovement.created_at.desc())
+            .offset(offset)
+            .limit(page.page_size)
+        )
+        return list(result.scalars().all()), int(total or 0)
+
+    async def purchase_price_stats_by_line_ids(
+        self,
+        line_ids: Sequence[UUID],
+    ) -> dict[UUID, PurchasePriceStats]:
+        unique = list(dict.fromkeys(line_ids))
+        if not unique:
+            return {}
+        rows = await self.session.execute(
+            select(
+                InkMovement.ink_line_id,
+                func.count(),
+                func.coalesce(func.sum(InkMovement.quantity), 0),
+                func.coalesce(
+                    func.sum(InkMovement.quantity * InkMovement.ink_rate),
+                    0,
+                ),
+                func.coalesce(func.sum(InkMovement.ink_rate), 0),
+            ).where(
+                InkMovement.ink_line_id.in_(unique),
+                InkMovement.deleted_at.is_(None),
+                InkMovement.direction.in_(
+                    (
+                        MaterialMovementDirection.IN.value,
+                        MaterialMovementDirection.OPENING.value,
+                    )
+                ),
+                InkMovement.ink_rate.is_not(None),
+            ).group_by(InkMovement.ink_line_id)
+        )
+        return {
+            line_id: PurchasePriceStats(
+                priced_count=int(count),
+                sum_kg=Decimal(sum_kg or 0),
+                sum_kg_price=Decimal(sum_kg_price or 0),
+                sum_price=Decimal(sum_price or 0),
+            )
+            for line_id, count, sum_kg, sum_kg_price, sum_price in rows.all()
+        }
+
+    async def last_stock_in(self, line_id: UUID) -> InkMovement | None:
+        result = await self.session.execute(
+            select(InkMovement)
+            .where(
+                InkMovement.ink_line_id == line_id,
+                InkMovement.deleted_at.is_(None),
+                InkMovement.direction == MaterialMovementDirection.IN.value,
+            )
+            .order_by(InkMovement.created_at.desc())
+            .limit(1)
+        )
+        return result.scalar_one_or_none()
 
     async def day_totals(self, movement_date: date) -> dict[UUID, tuple[Decimal, Decimal, Decimal, Decimal]]:
         rows = await self.session.execute(

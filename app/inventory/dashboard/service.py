@@ -9,10 +9,16 @@ from uuid import UUID
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.inventory.adhesives.models import AdhesiveBrand, AdhesiveCode
 from app.inventory.inks.models import InkBrand, InkColor
 
 from app.core.permissions import has_permission
-from app.inventory.catalog import CYLINDER_VIEW_PRICE, INK_VIEW_PRICE, MATERIAL_VIEW_PRICE
+from app.inventory.catalog import (
+    ADHESIVE_VIEW_PRICE,
+    CYLINDER_VIEW_PRICE,
+    INK_VIEW_PRICE,
+    MATERIAL_VIEW_PRICE,
+)
 from app.inventory.dashboard.repository import DashboardRepository
 from app.inventory.pricing import valuation_unit_price
 from app.inventory.repository import MovementRepository
@@ -31,10 +37,13 @@ from app.inventory.dashboard.schemas import (
     StockByProduct,
     TopCompanyCylinders,
     TopConsumedSku,
+    AdhesivesDashboard,
+    AdhesivesDashboardKpis,
     InkDeadStockItem,
     InksDashboard,
     InksDashboardKpis,
     StockByCompany,
+    TopConsumedAdhesiveLine,
     TopConsumedInkLine,
 )
 
@@ -376,4 +385,101 @@ class DashboardService:
             ],
             top_consumed=top_consumed,
             dead_stock=dead_stock,
+        )
+
+    async def adhesives_overview(
+        self,
+        *,
+        range_params: DashboardRange,
+        permissions: frozenset[str],
+    ) -> AdhesivesDashboard:
+        date_from, date_to, weekly = self._resolve_range(range_params)
+        can_view_price = has_permission(permissions, ADHESIVE_VIEW_PRICE)
+
+        lines = await self.repo.list_active_adhesive_lines()
+        active_lines = len(lines)
+        total_qty = sum((Decimal(line.total_qty or 0) for line in lines), Decimal("0"))
+        out_of_stock = sum(
+            1 for line in lines if (line.total_qty or Decimal("0")) <= 0
+        )
+
+        stock_value = Decimal("0")
+        valued_count = 0
+        if can_view_price:
+            for line in lines:
+                qty = Decimal(line.total_qty or 0)
+                rate = line.adhesive_rate
+                if qty > 0 and rate is not None:
+                    stock_value += qty * Decimal(rate)
+                    valued_count += 1
+
+        movement_rows = await self.repo.adhesive_movement_buckets(
+            date_from=date_from,
+            date_to=date_to,
+            weekly=weekly,
+        )
+        stock_by_company = await self.repo.adhesive_stock_qty_by_company()
+        out_by_line = await self.repo.adhesive_line_out_qty_in_range(
+            date_from=date_from,
+            date_to=date_to,
+        )
+
+        line_labels: dict[UUID, str] = {}
+        brand_ids = {line.brand_id for line in lines}
+        code_ids = {line.adhesive_code_id for line in lines}
+        if brand_ids:
+            brand_rows = await self.session.execute(
+                select(AdhesiveBrand).where(AdhesiveBrand.id.in_(brand_ids))
+            )
+            brands = {row.id: row.name for row in brand_rows.scalars()}
+        else:
+            brands = {}
+        if code_ids:
+            code_rows = await self.session.execute(
+                select(AdhesiveCode).where(AdhesiveCode.id.in_(code_ids))
+            )
+            codes = {row.id: row.code for row in code_rows.scalars()}
+        else:
+            codes = {}
+        for line in lines:
+            line_labels[line.id] = (
+                f"{brands.get(line.brand_id, '')} · {codes.get(line.adhesive_code_id, '')}"
+            )
+
+        top_consumed: list[TopConsumedAdhesiveLine] = []
+        for line_id, out_qty in sorted(out_by_line.items(), key=lambda pair: pair[1], reverse=True)[:5]:
+            name = line_labels.get(line_id)
+            if name is None:
+                continue
+            top_consumed.append(
+                TopConsumedAdhesiveLine(
+                    adhesive_line_id=str(line_id),
+                    name=name,
+                    out_qty=self._quantize(out_qty),
+                )
+            )
+
+        return AdhesivesDashboard(
+            date_from=date_from,
+            date_to=date_to,
+            kpis=AdhesivesDashboardKpis(
+                active_lines=active_lines,
+                total_qty_on_hand=self._quantize(total_qty),
+                out_of_stock_lines=out_of_stock,
+                stock_value=self._quantize(stock_value) if can_view_price else None,
+                valued_line_count=valued_count if can_view_price else 0,
+            ),
+            movement_buckets=[
+                MovementActivityBucket(
+                    bucket_start=bucket,
+                    in_kg=self._quantize(in_q),
+                    out_kg=self._quantize(out_q),
+                )
+                for bucket, in_q, out_q in movement_rows
+            ],
+            stock_by_company=[
+                StockByCompany(company_name=name, total_qty=self._quantize(qty))
+                for name, qty in stock_by_company
+            ],
+            top_consumed=top_consumed,
         )

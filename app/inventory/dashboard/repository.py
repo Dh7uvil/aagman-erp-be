@@ -13,6 +13,13 @@ from sqlalchemy.orm import aliased
 from app.core.enums import CylinderStatus, MaterialCategoryKind, MaterialMovementDirection
 from app.identity.models import Company
 from app.inventory.cylinders.models import CylinderReturn, Cylinder, CylinderPause
+from app.inventory.adhesives.models import (
+    AdhesiveBrand,
+    AdhesiveCode,
+    AdhesiveLine,
+    AdhesiveMovement,
+    AdhesiveSheet,
+)
 from app.inventory.inks.models import InkBrand, InkColor, InkLine, InkMovement, InkSheet
 from app.inventory.models import InventoryUnit, MaterialCategory, MaterialMovement
 
@@ -542,3 +549,96 @@ class DashboardRepository:
             (line_id, name, Decimal(total_qty or 0), last_activity_date)
             for line_id, name, total_qty, last_activity_date in rows.all()
         ]
+
+    async def adhesive_movement_buckets(
+        self,
+        *,
+        date_from: date,
+        date_to: date,
+        weekly: bool,
+    ) -> list[tuple[date, Decimal, Decimal]]:
+        if weekly:
+            bucket_expr = cast(func.date_trunc("week", AdhesiveMovement.movement_date), Date)
+        else:
+            bucket_expr = AdhesiveMovement.movement_date
+
+        rows = await self.session.execute(
+            select(
+                bucket_expr,
+                AdhesiveMovement.direction,
+                func.coalesce(func.sum(AdhesiveMovement.quantity), 0),
+            )
+            .where(
+                AdhesiveMovement.deleted_at.is_(None),
+                AdhesiveMovement.movement_date >= date_from,
+                AdhesiveMovement.movement_date <= date_to,
+                AdhesiveMovement.direction.in_(
+                    (
+                        MaterialMovementDirection.IN.value,
+                        MaterialMovementDirection.OUT.value,
+                    )
+                ),
+            )
+            .group_by(bucket_expr, AdhesiveMovement.direction)
+            .order_by(bucket_expr)
+        )
+        merged: dict[date, tuple[Decimal, Decimal]] = {}
+        for bucket, direction, sum_qty in rows.all():
+            if bucket is None:
+                continue
+            in_q, out_q = merged.get(bucket, (Decimal("0"), Decimal("0")))
+            if direction == MaterialMovementDirection.IN.value:
+                in_q += Decimal(sum_qty)
+            else:
+                out_q += Decimal(sum_qty)
+            merged[bucket] = (in_q, out_q)
+        return [(bucket, in_q, out_q) for bucket, (in_q, out_q) in sorted(merged.items())]
+
+    async def adhesive_stock_qty_by_company(self) -> list[tuple[str, Decimal]]:
+        rows = await self.session.execute(
+            select(Company.name, func.coalesce(func.sum(AdhesiveLine.total_qty), 0))
+            .select_from(AdhesiveLine)
+            .join(AdhesiveSheet, AdhesiveLine.adhesive_sheet_id == AdhesiveSheet.id)
+            .join(Company, AdhesiveSheet.company_id == Company.id)
+            .where(
+                AdhesiveLine.deleted_at.is_(None),
+                AdhesiveSheet.deleted_at.is_(None),
+                Company.deleted_at.is_(None),
+            )
+            .group_by(Company.name)
+            .order_by(func.sum(AdhesiveLine.total_qty).desc())
+        )
+        return [(name, Decimal(qty or 0)) for name, qty in rows.all()]
+
+    async def adhesive_line_out_qty_in_range(
+        self,
+        *,
+        date_from: date,
+        date_to: date,
+    ) -> dict[UUID, Decimal]:
+        rows = await self.session.execute(
+            select(
+                AdhesiveMovement.adhesive_line_id,
+                func.coalesce(func.sum(AdhesiveMovement.quantity), 0),
+            )
+            .where(
+                AdhesiveMovement.deleted_at.is_(None),
+                AdhesiveMovement.movement_date >= date_from,
+                AdhesiveMovement.movement_date <= date_to,
+                AdhesiveMovement.direction == MaterialMovementDirection.OUT.value,
+            )
+            .group_by(AdhesiveMovement.adhesive_line_id)
+        )
+        return {line_id: Decimal(qty or 0) for line_id, qty in rows.all()}
+
+    async def list_active_adhesive_lines(self) -> list[AdhesiveLine]:
+        result = await self.session.execute(
+            select(AdhesiveLine)
+            .join(AdhesiveSheet, AdhesiveLine.adhesive_sheet_id == AdhesiveSheet.id)
+            .where(
+                AdhesiveLine.deleted_at.is_(None),
+                AdhesiveSheet.deleted_at.is_(None),
+            )
+            .order_by(AdhesiveLine.created_at)
+        )
+        return list(result.scalars().all())

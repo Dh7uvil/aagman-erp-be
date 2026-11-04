@@ -13,6 +13,7 @@ from app.common.dependencies.permissions import ReferenceListAccess, require_per
 from app.common.schemas.pagination import paginated_response
 from app.common.schemas.response import ApiResponse
 from app.common.services.entity_history import EntityHistoryEntry
+from app.inventory.schemas import DrumLineHistoryEntry, DrumLineHistorySummary
 from app.inventory.catalog import (
     INK_COLOR_CREATE,
     INK_COLOR_DELETE,
@@ -52,6 +53,7 @@ ink_colors_router = APIRouter(prefix="/ink-colors", tags=["Ink Colors"])
 ink_brands_router = APIRouter(prefix="/ink-brands", tags=["Ink Brands"])
 inks_router = APIRouter(prefix="/inks", tags=["Inks"])
 ink_movements_router = APIRouter(prefix="/ink-movements", tags=["Ink Movements"])
+ink_lines_router = APIRouter(prefix="/ink-lines", tags=["Ink Lines"])
 
 
 @ink_colors_router.get("", response_model=ApiResponse[list[InkColorResponse]])
@@ -171,6 +173,15 @@ async def create_ink_brand(
     _: Annotated[CurrentUser, Depends(require_permission(INK_CREATE))],
 ) -> ApiResponse[InkBrandResponse]:
     return ApiResponse(data=await service.create_brand(payload), message="Ink brand created successfully")
+
+
+@ink_brands_router.get("/{brand_id}", response_model=ApiResponse[InkBrandResponse])
+async def get_ink_brand(
+    brand_id: UUID,
+    service: InkServiceDependency,
+    _: ReferenceListAccess,
+) -> ApiResponse[InkBrandResponse]:
+    return ApiResponse(data=await service.get_brand(brand_id))
 
 
 @ink_brands_router.patch("/{brand_id}", response_model=ApiResponse[InkBrandResponse])
@@ -365,6 +376,37 @@ async def delete_ink_file(
         permissions=current_user.permissions,
     )
     return ApiResponse(data=row, message="File removed successfully")
+
+
+@ink_lines_router.get("/{line_id}/history", response_model=ApiResponse[list[DrumLineHistoryEntry]])
+async def ink_line_history(
+    line_id: UUID,
+    page: PaginationDependency,
+    service: InkServiceDependency,
+    current_user: CurrentUserDependency,
+    _: Annotated[CurrentUser, Depends(require_permission(INK_HISTORY))],
+) -> ApiResponse[list[DrumLineHistoryEntry]]:
+    rows, total = await service.line_history(
+        line_id,
+        page=page,
+        permissions=current_user.permissions,
+    )
+    return paginated_response(rows, params=page, total=total)
+
+
+@ink_lines_router.get(
+    "/{line_id}/history-summary",
+    response_model=ApiResponse[DrumLineHistorySummary],
+)
+async def ink_line_history_summary(
+    line_id: UUID,
+    service: InkServiceDependency,
+    current_user: CurrentUserDependency,
+    _: Annotated[CurrentUser, Depends(require_permission(INK_HISTORY))],
+) -> ApiResponse[DrumLineHistorySummary]:
+    return ApiResponse(
+        data=await service.line_history_summary(line_id, permissions=current_user.permissions),
+    )
 
 
 @ink_movements_router.get("/report", response_model=ApiResponse[list[InkDayReportRow]])

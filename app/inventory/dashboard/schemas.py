@@ -148,3 +148,26 @@ class InksDashboard(BaseModel):
     stock_by_company: list[StockByCompany]
     top_consumed: list[TopConsumedInkLine]
     dead_stock: list[InkDeadStockItem] = Field(default_factory=list)
+
+
+class TopConsumedAdhesiveLine(BaseModel):
+    adhesive_line_id: str
+    name: str
+    out_qty: Decimal
+
+
+class AdhesivesDashboardKpis(BaseModel):
+    active_lines: int
+    total_qty_on_hand: Decimal
+    out_of_stock_lines: int
+    stock_value: Decimal | None = None
+    valued_line_count: int = 0
+
+
+class AdhesivesDashboard(BaseModel):
+    date_from: date
+    date_to: date
+    kpis: AdhesivesDashboardKpis
+    movement_buckets: list[MovementActivityBucket]
+    stock_by_company: list[StockByCompany]
+    top_consumed: list[TopConsumedAdhesiveLine]

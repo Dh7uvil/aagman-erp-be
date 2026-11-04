@@ -122,6 +122,8 @@ class InkLineResponse(BaseModel):
     total_qty: Decimal
     ink_rate: Decimal | None = None
     total_rate: Decimal | None = None
+    avg_price_per_unit: Decimal | None = None
+    price_unit_code: str | None = None
     created_at: datetime
     updated_at: datetime
 
@@ -230,6 +232,8 @@ class InkColorUsageLine(BaseModel):
     total_qty: Decimal
     ink_rate: Decimal | None = None
     total_rate: Decimal | None = None
+    avg_price_per_unit: Decimal | None = None
+    price_unit_code: str | None = None
 
 
 class InkColorUsageResponse(BaseModel):

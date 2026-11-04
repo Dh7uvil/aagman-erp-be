@@ -26,4 +26,5 @@ import app.common.table_preferences.models as _table_preferences  # noqa: E402, 
 import app.identity.models as _identity_models  # noqa: E402, F401
 import app.inventory.models as _inventory_models  # noqa: E402, F401
 import app.inventory.cylinders.models as _inventory_cylinders_models  # noqa: E402, F401
+import app.inventory.adhesives.models as _inventory_adhesives_models  # noqa: E402, F401
 import app.inventory.inks.models as _inventory_inks_models  # noqa: E402, F401

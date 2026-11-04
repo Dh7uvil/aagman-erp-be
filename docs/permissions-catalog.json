@@ -28,6 +28,18 @@
     "identity.warehouse.delete",
     "identity.warehouse.read",
     "identity.warehouse.update",
+    "inventory.adhesive.create",
+    "inventory.adhesive.delete",
+    "inventory.adhesive.history",
+    "inventory.adhesive.read",
+    "inventory.adhesive.update",
+    "inventory.adhesive.view_price",
+    "inventory.adhesive_code.create",
+    "inventory.adhesive_code.delete",
+    "inventory.adhesive_code.history",
+    "inventory.adhesive_code.read",
+    "inventory.adhesive_code.update",
+    "inventory.adhesives_report.read",
     "inventory.cylinder.create",
     "inventory.cylinder.delete",
     "inventory.cylinder.history",
@@ -189,6 +201,24 @@
         "delete"
       ],
       "inks_report": [
+        "read"
+      ],
+      "adhesive_code": [
+        "create",
+        "read",
+        "update",
+        "delete",
+        "history"
+      ],
+      "adhesive": [
+        "create",
+        "read",
+        "update",
+        "delete",
+        "view_price",
+        "history"
+      ],
+      "adhesives_report": [
         "read"
       ]
     }

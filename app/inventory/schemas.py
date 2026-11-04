@@ -308,6 +308,40 @@ class MaterialHistorySummary(BaseModel):
     price_unit_code: str | None = None
 
 
+class DrumLineHistoryEntry(BaseModel):
+    id: UUID
+    timestamp: datetime
+    kind: Literal["stock"] = "stock"
+    action: str
+    user: AuditLogUserSummary | None = None
+    company_id: UUID | None = None
+    company_name: str = ""
+    drums: Decimal | None = None
+    quantity: Decimal | None = None
+    quantity_unit_code: str | None = None
+    price_per_unit: Decimal | None = None
+    price_unit_code: str | None = None
+    note: str | None = None
+
+
+class DrumLineHistorySummary(BaseModel):
+    line_id: UUID
+    sheet_id: UUID
+    company_id: UUID
+    company_name: str
+    brand_name: str
+    line_label: str
+    drums_on_hand: Decimal
+    total_qty: Decimal
+    quantity_unit_code: str
+    last_purchase_price: Decimal | None = None
+    last_purchase_price_unit_code: str | None = None
+    last_purchase_date: date | None = None
+    last_purchase_drums: Decimal | None = None
+    avg_price_per_unit: Decimal | None = None
+    price_unit_code: str | None = None
+
+
 class DayReportRow(BaseModel):
     category_id: UUID
     product_id: UUID
