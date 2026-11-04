@@ -93,11 +93,7 @@ class CylinderReturnService:
                 module=INVENTORY_MODULE,
                 entity_type="cylinder_return",
                 entity_id=row.id,
-                new_values={
-                    "return_number": row.return_number,
-                    "cylinder_id": str(row.cylinder_id),
-                    "company_id": str(row.company_id),
-                },
+                new_values=await self._return_audit_snapshot(row),
             )
             return await self._to_response(row)
 
@@ -111,10 +107,8 @@ class CylinderReturnService:
         values = payload.model_dump(exclude_unset=True)
         async with transaction(self.session):
             row = await self._require(return_id)
-            old = {
-                "company_id": str(row.company_id),
-                "remarks": row.remarks,
-            }
+            old = await self._return_audit_snapshot(row)
+            old = {k: v for k, v in old.items() if k in ("company_name", "cylinder_number", "remarks")}
             if "company_id" in values and values["company_id"] is not None:
                 job = await self.cylinder_repo.get(row.cylinder_id)
                 if job is not None and job.company_id != values["company_id"]:
@@ -123,10 +117,8 @@ class CylinderReturnService:
             updated = await self.repo.update(return_id, values)
             if updated is None:
                 raise ResourceNotFoundError("Cylinder return not found")
-            new = {
-                "company_id": str(updated.company_id),
-                "remarks": updated.remarks,
-            }
+            new = await self._return_audit_snapshot(updated)
+            new = {k: v for k, v in new.items() if k in ("company_name", "cylinder_number", "remarks")}
             if audit_field_changes(old, new):
                 await self.audit.write(
                     user_id=actor_user_id,
@@ -177,6 +169,18 @@ class CylinderReturnService:
             entity_id=return_id,
             page=page,
         )
+
+    async def _return_audit_snapshot(self, row) -> dict[str, object]:
+        company = await self.session.scalar(
+            select(Company).where(Company.id == row.company_id, Company.deleted_at.is_(None))
+        )
+        job = await self.cylinder_repo.get(row.cylinder_id)
+        return {
+            "return_number": row.return_number,
+            "company_name": company.name if company else str(row.company_id),
+            "cylinder_number": job.cylinder_number if job else str(row.cylinder_id),
+            "remarks": row.remarks,
+        }
 
     async def _require(self, return_id: UUID):
         from app.inventory.cylinders.models import CylinderReturn

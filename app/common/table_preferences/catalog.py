@@ -178,6 +178,75 @@ TABLE_CATALOG: dict[str, TableCatalogEntry] = {
             ("return_number", "customer", "return_date", "cylinder", "remarks"),
             *_hidden("created_at", "updated_at"),
         ),
+        TableCatalogEntry(
+            table_key="inventory.inks",
+            columns=(
+                TableColumnSpec("company"),
+                TableColumnSpec("brand"),
+                TableColumnSpec("color"),
+                TableColumnSpec("hex", default_visible=False),
+                TableColumnSpec("drum_count"),
+                TableColumnSpec("drum_qty", default_visible=False),
+                TableColumnSpec("unit", default_visible=False),
+                TableColumnSpec("total_qty"),
+                TableColumnSpec(
+                    "ink_rate",
+                    default_visible=False,
+                    required_permission="inventory.ink.view_price",
+                ),
+                TableColumnSpec(
+                    "total_rate",
+                    default_visible=False,
+                    required_permission="inventory.ink.view_price",
+                ),
+                TableColumnSpec("created_at", default_visible=False),
+                TableColumnSpec("updated_at", default_visible=False),
+            ),
+        ),
+        _entry(
+            "inventory.ink_colors",
+            ("name", "hex", "active"),
+            *_hidden("created_at", "updated_at"),
+        ),
+        TableCatalogEntry(
+            table_key="inventory.inks_report",
+            pinned_count=0,
+            columns=(
+                TableColumnSpec("company"),
+                TableColumnSpec("brand"),
+                TableColumnSpec("color"),
+                TableColumnSpec("in_drums"),
+                TableColumnSpec("in_qty"),
+                TableColumnSpec("out_drums"),
+                TableColumnSpec("out_qty"),
+                TableColumnSpec("closing_drums"),
+                TableColumnSpec("closing_qty"),
+                TableColumnSpec(
+                    "ink_rate",
+                    required_permission="inventory.ink.view_price",
+                ),
+            ),
+        ),
+        TableCatalogEntry(
+            table_key="inventory.ink_color_usage",
+            pinned_count=0,
+            columns=(
+                TableColumnSpec("company"),
+                TableColumnSpec("brand"),
+                TableColumnSpec("drums"),
+                TableColumnSpec("per_drum"),
+                TableColumnSpec("total_qty"),
+                TableColumnSpec(
+                    "ink_rate",
+                    required_permission="inventory.ink.view_price",
+                ),
+                TableColumnSpec(
+                    "total_rate",
+                    required_permission="inventory.ink.view_price",
+                ),
+                TableColumnSpec("sheet"),
+            ),
+        ),
     )
 }
 

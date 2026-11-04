@@ -57,6 +57,12 @@ movements_router = APIRouter(prefix="/material-movements", tags=["Material Movem
 
 from app.inventory.dashboard.router import dashboard_router
 from app.inventory.cylinders.router import cylinders_router, returns_router
+from app.inventory.inks.router import (
+    ink_brands_router,
+    ink_colors_router,
+    ink_movements_router,
+    inks_router,
+)
 
 router = APIRouter(prefix="/inventory", tags=["Inventory"])
 router.include_router(units_router)
@@ -67,6 +73,10 @@ router.include_router(movements_router)
 router.include_router(cylinders_router)
 router.include_router(returns_router)
 router.include_router(dashboard_router)
+router.include_router(ink_colors_router)
+router.include_router(ink_brands_router)
+router.include_router(inks_router)
+router.include_router(ink_movements_router)
 
 
 @units_router.get("", response_model=ApiResponse[list[UnitResponse]])

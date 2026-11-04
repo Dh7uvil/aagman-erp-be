@@ -110,3 +110,41 @@ class MaterialsDashboard(BaseModel):
     reorder_watchlist: list[ReorderWatchItem]
     top_consumed: list[TopConsumedSku]
     dead_stock: list[DeadStockItem] = Field(default_factory=list)
+
+
+class StockByCompany(BaseModel):
+    company_name: str
+    total_qty: Decimal
+
+
+class TopConsumedInkLine(BaseModel):
+    ink_line_id: str
+    name: str
+    out_qty: Decimal
+
+
+class InkDeadStockItem(BaseModel):
+    ink_line_id: str
+    name: str
+    total_qty: Decimal
+    days_idle: int
+    last_activity_date: date
+
+
+class InksDashboardKpis(BaseModel):
+    active_lines: int
+    total_qty_on_hand: Decimal
+    out_of_stock_lines: int
+    stock_value: Decimal | None = None
+    valued_line_count: int = 0
+    dead_stock_lines: int = 0
+
+
+class InksDashboard(BaseModel):
+    date_from: date
+    date_to: date
+    kpis: InksDashboardKpis
+    movement_buckets: list[MovementActivityBucket]
+    stock_by_company: list[StockByCompany]
+    top_consumed: list[TopConsumedInkLine]
+    dead_stock: list[InkDeadStockItem] = Field(default_factory=list)

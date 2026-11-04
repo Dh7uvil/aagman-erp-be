@@ -778,14 +778,22 @@ class AuthService:
     async def _user_snapshot(
         self, user: User, *, roles: Sequence[Role] | None = None
     ) -> dict[str, object]:
+        branch_name: str | None = None
+        if user.branch_id is not None:
+            branch = await self.org.get_branch(user.branch_id)
+            branch_name = branch.name if branch is not None else str(user.branch_id)
+        department_name: str | None = None
+        if user.department_id is not None:
+            department = await self.org.get_department(user.department_id)
+            department_name = department.name if department is not None else str(user.department_id)
         snapshot: dict[str, object] = {
             "name": user.name,
             "email": user.email,
             "phone": user.phone,
             "status": user.status,
             "designation": user.designation,
-            "branch_id": str(user.branch_id) if user.branch_id else None,
-            "department_id": str(user.department_id) if user.department_id else None,
+            "branch": branch_name,
+            "department": department_name,
         }
         if roles is not None:
             snapshot["roles"] = _role_names(roles)

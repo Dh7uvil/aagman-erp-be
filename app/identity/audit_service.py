@@ -13,7 +13,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.common.models.audit_log import AuditLog
 from app.common.schemas.filters import BaseFilter
 from app.common.schemas.pagination import PageParams
-from app.common.services.audit import audit_field_changes
+from app.common.services.audit_display import AuditDisplayService
 from app.core.exceptions import ResourceNotFoundError
 from app.identity.audit_repository import AuditLogRepository
 from app.identity.models import User
@@ -32,6 +32,7 @@ class AuditLogService:
         self.session = session
         self.repo = AuditLogRepository(session)
         self.org = OrganizationRepository(session)
+        self.display = AuditDisplayService(session)
 
     async def list_logs(
         self,
@@ -55,7 +56,11 @@ class AuditLogService:
         )
         user_ids = [row.user_id for row in rows if row.user_id is not None]
         users = await self.org.get_users_by_ids(user_ids)
-        return [self._to_response(row, users) for row in rows], total
+        await self.display.preload_for_logs(rows)
+        responses: list[AuditLogResponse] = []
+        for row in rows:
+            responses.append(await self._to_response(row, users))
+        return responses, total
 
     async def summarize(self, *, common_filter: BaseFilter | None = None) -> AuditLogSummaryResponse:
         date_filter = None
@@ -67,11 +72,13 @@ class AuditLogService:
         total_events, unique_users, failed_attempts, admin_actions = await self.repo.summarize(
             common_filter=date_filter,
         )
+        modules = await self.repo.list_distinct_modules(common_filter=date_filter)
         return AuditLogSummaryResponse(
             total_events=total_events,
             unique_users=unique_users,
             failed_attempts=failed_attempts,
             admin_actions=admin_actions,
+            modules=modules,
         )
 
     async def get_log(self, audit_log_id: UUID) -> AuditLogDetailResponse:
@@ -79,7 +86,7 @@ class AuditLogService:
         if row is None:
             raise ResourceNotFoundError("Audit log not found")
         users = await self.org.get_users_by_ids([row.user_id] if row.user_id else [])
-        return self._to_detail_response(row, users)
+        return await self._to_detail_response(row, users)
 
     async def export_csv(
         self,
@@ -102,6 +109,7 @@ class AuditLogService:
         users = await self.org.get_users_by_ids(
             [row.user_id for row in rows if row.user_id is not None],
         )
+        await self.display.preload_for_logs(rows)
         buffer = io.StringIO()
         writer = csv.DictWriter(
             buffer,
@@ -113,6 +121,7 @@ class AuditLogService:
                 "module",
                 "entity_type",
                 "entity_id",
+                "entity_label",
                 "status",
                 "ip_address",
                 "user_agent",
@@ -123,6 +132,14 @@ class AuditLogService:
         writer.writeheader()
         for row in rows:
             user = users.get(row.user_id) if row.user_id is not None else None
+            label = await self.display.entity_label(
+                entity_type=row.entity_type,
+                entity_id=row.entity_id,
+                old_values=_json_object(row.old_values),
+                new_values=_json_object(row.new_values),
+            )
+            old_h = await self.display.humanize_values(_json_object(row.old_values))
+            new_h = await self.display.humanize_values(_json_object(row.new_values))
             writer.writerow(
                 {
                     "timestamp": row.created_at.isoformat(),
@@ -132,19 +149,27 @@ class AuditLogService:
                     "module": row.module,
                     "entity_type": row.entity_type,
                     "entity_id": str(row.entity_id) if row.entity_id else "",
+                    "entity_label": label or "",
                     "status": row.status,
                     "ip_address": row.ip_address or "",
                     "user_agent": row.user_agent or "",
-                    "old_values": _json_cell(row.old_values),
-                    "new_values": _json_cell(row.new_values),
+                    "old_values": _json_cell(old_h),
+                    "new_values": _json_cell(new_h),
                 }
             )
         return buffer.getvalue()
 
-    @staticmethod
-    def _to_response(row: AuditLog, users: dict[UUID, User]) -> AuditLogResponse:
+    async def _to_response(self, row: AuditLog, users: dict[UUID, User]) -> AuditLogResponse:
         user = users.get(row.user_id) if row.user_id is not None else None
         user_summary = AuditLogUserSummary.model_validate(user) if user is not None else None
+        old_values = _json_object(row.old_values)
+        new_values = _json_object(row.new_values)
+        entity_label = await self.display.entity_label(
+            entity_type=row.entity_type,
+            entity_id=row.entity_id,
+            old_values=old_values,
+            new_values=new_values,
+        )
         return AuditLogResponse(
             id=row.id,
             timestamp=row.created_at,
@@ -152,28 +177,31 @@ class AuditLogService:
             action=row.action,
             entity_type=row.entity_type,
             entity_id=row.entity_id,
+            entity_label=entity_label,
             module=row.module,
             ip_address=row.ip_address,
             status=row.status,
         )
 
-    @classmethod
-    def _to_detail_response(cls, row: AuditLog, users: dict[UUID, User]) -> AuditLogDetailResponse:
-        base = cls._to_response(row, users)
+    async def _to_detail_response(self, row: AuditLog, users: dict[UUID, User]) -> AuditLogDetailResponse:
+        base = await self._to_response(row, users)
         old_values = _json_object(row.old_values)
         new_values = _json_object(row.new_values)
+        old_h = await self.display.humanize_values(old_values)
+        new_h = await self.display.humanize_values(new_values)
+        changes = await self.display.humanize_changes(old_values, new_values)
         return AuditLogDetailResponse(
             **base.model_dump(),
             user_agent=row.user_agent,
-            old_values=old_values,
-            new_values=new_values,
+            old_values=old_h,
+            new_values=new_h,
             changes=[
                 AuditLogChange(
                     field=change["field"],
                     old_value=change["old_value"],
                     new_value=change["new_value"],
                 )
-                for change in audit_field_changes(old_values, new_values)
+                for change in changes
             ],
         )
 

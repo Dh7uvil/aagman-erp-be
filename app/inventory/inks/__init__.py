@@ -1,0 +1,1 @@
+"""Ink inventory submodule."""

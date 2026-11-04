@@ -13,6 +13,7 @@ from sqlalchemy.orm import aliased
 from app.core.enums import CylinderStatus, MaterialCategoryKind, MaterialMovementDirection
 from app.identity.models import Company
 from app.inventory.cylinders.models import CylinderReturn, Cylinder, CylinderPause
+from app.inventory.inks.models import InkBrand, InkColor, InkLine, InkMovement, InkSheet
 from app.inventory.models import InventoryUnit, MaterialCategory, MaterialMovement
 
 
@@ -391,4 +392,153 @@ class DashboardRepository:
                 last_activity_date,
             )
             for sku_id, name, total_kg, last_activity_date in rows.all()
+        ]
+
+    async def ink_movement_buckets(
+        self,
+        *,
+        date_from: date,
+        date_to: date,
+        weekly: bool,
+    ) -> list[tuple[date, Decimal, Decimal]]:
+        if weekly:
+            bucket_expr = cast(func.date_trunc("week", InkMovement.movement_date), Date)
+        else:
+            bucket_expr = InkMovement.movement_date
+
+        rows = await self.session.execute(
+            select(
+                bucket_expr,
+                InkMovement.direction,
+                func.coalesce(func.sum(InkMovement.quantity), 0),
+            )
+            .where(
+                InkMovement.deleted_at.is_(None),
+                InkMovement.movement_date >= date_from,
+                InkMovement.movement_date <= date_to,
+                InkMovement.direction.in_(
+                    (
+                        MaterialMovementDirection.IN.value,
+                        MaterialMovementDirection.OUT.value,
+                    )
+                ),
+            )
+            .group_by(bucket_expr, InkMovement.direction)
+            .order_by(bucket_expr)
+        )
+        merged: dict[date, tuple[Decimal, Decimal]] = {}
+        for bucket, direction, sum_qty in rows.all():
+            if bucket is None:
+                continue
+            in_q, out_q = merged.get(bucket, (Decimal("0"), Decimal("0")))
+            if direction == MaterialMovementDirection.IN.value:
+                in_q += Decimal(sum_qty)
+            else:
+                out_q += Decimal(sum_qty)
+            merged[bucket] = (in_q, out_q)
+        return [(bucket, in_q, out_q) for bucket, (in_q, out_q) in sorted(merged.items())]
+
+    async def stock_qty_by_company(self) -> list[tuple[str, Decimal]]:
+        rows = await self.session.execute(
+            select(Company.name, func.coalesce(func.sum(InkLine.total_qty), 0))
+            .select_from(InkLine)
+            .join(InkSheet, InkLine.ink_sheet_id == InkSheet.id)
+            .join(Company, InkSheet.company_id == Company.id)
+            .where(
+                InkLine.deleted_at.is_(None),
+                InkSheet.deleted_at.is_(None),
+                Company.deleted_at.is_(None),
+            )
+            .group_by(Company.name)
+            .order_by(func.sum(InkLine.total_qty).desc())
+        )
+        return [(name, Decimal(qty or 0)) for name, qty in rows.all()]
+
+    async def ink_line_out_qty_in_range(
+        self,
+        *,
+        date_from: date,
+        date_to: date,
+    ) -> dict[UUID, Decimal]:
+        rows = await self.session.execute(
+            select(
+                InkMovement.ink_line_id,
+                func.coalesce(func.sum(InkMovement.quantity), 0),
+            )
+            .where(
+                InkMovement.deleted_at.is_(None),
+                InkMovement.movement_date >= date_from,
+                InkMovement.movement_date <= date_to,
+                InkMovement.direction == MaterialMovementDirection.OUT.value,
+            )
+            .group_by(InkMovement.ink_line_id)
+        )
+        return {line_id: Decimal(qty or 0) for line_id, qty in rows.all()}
+
+    async def list_active_ink_lines(self) -> list[InkLine]:
+        result = await self.session.execute(
+            select(InkLine)
+            .join(InkSheet, InkLine.ink_sheet_id == InkSheet.id)
+            .where(
+                InkLine.deleted_at.is_(None),
+                InkSheet.deleted_at.is_(None),
+            )
+            .order_by(InkLine.created_at)
+        )
+        return list(result.scalars().all())
+
+    async def list_dead_stock_ink_lines(
+        self,
+        *,
+        as_of: date | None = None,
+        idle_days: int = 30,
+    ) -> list[tuple[UUID, str, Decimal, date]]:
+        today = as_of or date.today()
+        cutoff = today - timedelta(days=idle_days)
+        movement_directions = (
+            MaterialMovementDirection.IN.value,
+            MaterialMovementDirection.OUT.value,
+            MaterialMovementDirection.OPENING.value,
+        )
+        brand = aliased(InkBrand)
+        color = aliased(InkColor)
+        created_date = cast(InkLine.created_at, Date)
+        last_activity = func.coalesce(func.max(InkMovement.movement_date), created_date)
+
+        rows = await self.session.execute(
+            select(
+                InkLine.id,
+                func.concat(brand.name, " · ", color.name).label("label"),
+                InkLine.total_qty,
+                last_activity.label("last_activity"),
+            )
+            .join(InkSheet, InkLine.ink_sheet_id == InkSheet.id)
+            .join(brand, InkLine.brand_id == brand.id)
+            .join(color, InkLine.color_id == color.id)
+            .outerjoin(
+                InkMovement,
+                and_(
+                    InkMovement.ink_line_id == InkLine.id,
+                    InkMovement.deleted_at.is_(None),
+                    InkMovement.direction.in_(movement_directions),
+                ),
+            )
+            .where(
+                InkLine.deleted_at.is_(None),
+                InkSheet.deleted_at.is_(None),
+                InkLine.total_qty > 0,
+            )
+            .group_by(
+                InkLine.id,
+                brand.name,
+                color.name,
+                InkLine.total_qty,
+                InkLine.created_at,
+            )
+            .having(last_activity < cutoff)
+            .order_by(last_activity.asc())
+        )
+        return [
+            (line_id, name, Decimal(total_qty or 0), last_activity_date)
+            for line_id, name, total_qty, last_activity_date in rows.all()
         ]

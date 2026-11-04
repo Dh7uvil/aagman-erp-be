@@ -46,6 +46,22 @@
     "inventory.cylinder_return.delete",
     "inventory.cylinder_return.read",
     "inventory.cylinder_return.update",
+    "inventory.ink.create",
+    "inventory.ink.delete",
+    "inventory.ink.history",
+    "inventory.ink.read",
+    "inventory.ink.update",
+    "inventory.ink.view_price",
+    "inventory.ink_color.create",
+    "inventory.ink_color.delete",
+    "inventory.ink_color.history",
+    "inventory.ink_color.read",
+    "inventory.ink_color.update",
+    "inventory.ink_image.create",
+    "inventory.ink_image.delete",
+    "inventory.ink_image.read",
+    "inventory.ink_image.update",
+    "inventory.inks_report.read",
     "inventory.material.create",
     "inventory.material.delete",
     "inventory.material.history",
@@ -150,6 +166,30 @@
         "read",
         "update",
         "delete"
+      ],
+      "ink_color": [
+        "create",
+        "read",
+        "update",
+        "delete",
+        "history"
+      ],
+      "ink": [
+        "create",
+        "read",
+        "update",
+        "delete",
+        "view_price",
+        "history"
+      ],
+      "ink_image": [
+        "create",
+        "read",
+        "update",
+        "delete"
+      ],
+      "inks_report": [
+        "read"
       ]
     }
   }
