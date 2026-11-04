@@ -341,7 +341,11 @@ class InkMovementRepository:
         )
         return result.scalar_one_or_none()
 
-    async def day_totals(self, movement_date: date) -> dict[UUID, tuple[Decimal, Decimal, Decimal, Decimal]]:
+    async def day_totals(
+        self,
+        start_date: date,
+        end_date: date,
+    ) -> dict[UUID, tuple[Decimal, Decimal, Decimal, Decimal]]:
         rows = await self.session.execute(
             select(
                 InkMovement.ink_line_id,
@@ -350,7 +354,8 @@ class InkMovementRepository:
                 func.coalesce(func.sum(InkMovement.quantity), 0),
             )
             .where(
-                InkMovement.movement_date == movement_date,
+                InkMovement.movement_date >= start_date,
+                InkMovement.movement_date <= end_date,
                 InkMovement.deleted_at.is_(None),
                 InkMovement.direction.in_(
                     (

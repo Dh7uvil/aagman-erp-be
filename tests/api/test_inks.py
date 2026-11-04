@@ -452,6 +452,80 @@ async def test_ink_movement_day_report(client: AsyncClient) -> None:
     assert float(match[0]["closing_qty"]) == 10
 
 
+async def test_ink_movement_report_date_range(client: AsyncClient) -> None:
+    email, password = await provision_admin()
+    headers = await login_headers(client, email, password)
+    kg_unit = await _unit_id_by_code(client, headers, "kg")
+    company_id = await _create_company(client, headers)
+    brand_id = await _create_brand(client, headers, f"Brand-{uuid4().hex[:4]}")
+    color_id = await _create_color(client, headers, f"Range-{uuid4().hex[:4]}")
+
+    create = await client.post(
+        "/api/v1/inventory/inks",
+        headers=headers,
+        json={
+            "company_id": company_id,
+            "lines": [
+                {
+                    "brand_id": brand_id,
+                    "color_id": color_id,
+                    "drum_count": "2",
+                    "drum_qty": "10",
+                    "drum_unit_id": kg_unit,
+                }
+            ],
+        },
+    )
+    assert create.status_code == 201
+    sheet_id = create.json()["data"]["id"]
+    line_id = create.json()["data"]["lines"][0]["id"]
+
+    day1 = (date.today() - timedelta(days=2)).isoformat()
+    day2 = (date.today() - timedelta(days=1)).isoformat()
+
+    stock_out_day1 = await client.post(
+        f"/api/v1/inventory/inks/{sheet_id}/stock-out",
+        headers=headers,
+        json={"ink_line_id": line_id, "drums": "1", "quantity": "10", "movement_date": day1},
+    )
+    assert stock_out_day1.status_code == 200, stock_out_day1.text
+
+    range_report = await client.get(
+        "/api/v1/inventory/ink-movements/report",
+        headers=headers,
+        params={"start_date": day1, "end_date": day2},
+    )
+    assert range_report.status_code == 200, range_report.text
+    match = [row for row in range_report.json()["data"] if row["ink_line_id"] == line_id]
+    assert len(match) == 1
+    assert float(match[0]["out_drums"]) == 1
+    assert float(match[0]["out_qty"]) == 10
+    assert float(match[0]["closing_drums"]) == 1
+    assert float(match[0]["closing_qty"]) == 10
+
+    single_day = await client.get(
+        "/api/v1/inventory/ink-movements/report",
+        headers=headers,
+        params={"date": day2},
+    )
+    assert single_day.status_code == 200, single_day.text
+    day2_match = [row for row in single_day.json()["data"] if row["ink_line_id"] == line_id]
+    assert len(day2_match) == 1
+    assert float(day2_match[0]["out_drums"]) == 0
+    assert float(day2_match[0]["closing_drums"]) == 1
+
+    same_day_range = await client.get(
+        "/api/v1/inventory/ink-movements/report",
+        headers=headers,
+        params={"start_date": day1, "end_date": day1},
+    )
+    assert same_day_range.status_code == 200, same_day_range.text
+    day1_match = [row for row in same_day_range.json()["data"] if row["ink_line_id"] == line_id]
+    assert len(day1_match) == 1
+    assert float(day1_match[0]["out_drums"]) == 1
+    assert float(day1_match[0]["closing_drums"]) == 1
+
+
 async def test_ink_color_usage_table_preference_matches_sheet_columns(client: AsyncClient) -> None:
     email, password = await provision_admin()
     headers = await login_headers(client, email, password)

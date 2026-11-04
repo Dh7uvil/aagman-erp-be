@@ -289,7 +289,8 @@ class MovementRepository:
 
     async def day_totals(
         self,
-        movement_date: date,
+        start_date: date,
+        end_date: date,
     ) -> dict[UUID, tuple[Decimal, Decimal, Decimal, Decimal]]:
         rows = await self.session.execute(
             select(
@@ -299,7 +300,8 @@ class MovementRepository:
                 func.coalesce(func.sum(MaterialMovement.kilograms), 0),
             )
             .where(
-                MaterialMovement.movement_date == movement_date,
+                MaterialMovement.movement_date >= start_date,
+                MaterialMovement.movement_date <= end_date,
                 MaterialMovement.deleted_at.is_(None),
                 MaterialMovement.direction.in_(
                     (

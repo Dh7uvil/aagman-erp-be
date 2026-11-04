@@ -341,7 +341,11 @@ class SolventMovementRepository:
         )
         return result.scalar_one_or_none()
 
-    async def day_totals(self, movement_date: date) -> dict[UUID, tuple[Decimal, Decimal, Decimal, Decimal]]:
+    async def day_totals(
+        self,
+        start_date: date,
+        end_date: date,
+    ) -> dict[UUID, tuple[Decimal, Decimal, Decimal, Decimal]]:
         rows = await self.session.execute(
             select(
                 SolventMovement.solvent_line_id,
@@ -350,7 +354,8 @@ class SolventMovementRepository:
                 func.coalesce(func.sum(SolventMovement.quantity), 0),
             )
             .where(
-                SolventMovement.movement_date == movement_date,
+                SolventMovement.movement_date >= start_date,
+                SolventMovement.movement_date <= end_date,
                 SolventMovement.deleted_at.is_(None),
                 SolventMovement.direction.in_(
                     (

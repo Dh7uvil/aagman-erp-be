@@ -1270,7 +1270,8 @@ class InventoryService:
     async def day_report(
         self,
         *,
-        report_date: date,
+        start_date: date,
+        end_date: date,
         permissions: frozenset[str],
     ) -> list[DayReportRow]:
         can_view_price = self._can_view_price(permissions)
@@ -1278,7 +1279,7 @@ class InventoryService:
         if not skus:
             return []
 
-        day_totals = await self.movements.day_totals(report_date)
+        day_totals = await self.movements.day_totals(start_date, end_date)
         micron_ids = [sku.parent_id for sku in skus if sku.parent_id]
         microns = await self.categories.get_by_ids(micron_ids)
         product_ids = [m.parent_id for m in microns.values() if m.parent_id]
@@ -1310,7 +1311,7 @@ class InventoryService:
                 sku.id,
                 (Decimal("0"), Decimal("0"), Decimal("0"), Decimal("0")),
             )
-            closing_rolls, closing_kg = await self.movements.sum_through_date(sku.id, report_date)
+            closing_rolls, closing_kg = await self.movements.sum_through_date(sku.id, end_date)
             price = micron.price_per_unit if micron and can_view_price else None
             price_code = price_unit.code if price_unit and can_view_price else None
             size_val = self._display_decimal(sku.size or Decimal("0")) or Decimal("0")

@@ -341,7 +341,11 @@ class AdhesiveMovementRepository:
         )
         return result.scalar_one_or_none()
 
-    async def day_totals(self, movement_date: date) -> dict[UUID, tuple[Decimal, Decimal, Decimal, Decimal]]:
+    async def day_totals(
+        self,
+        start_date: date,
+        end_date: date,
+    ) -> dict[UUID, tuple[Decimal, Decimal, Decimal, Decimal]]:
         rows = await self.session.execute(
             select(
                 AdhesiveMovement.adhesive_line_id,
@@ -350,7 +354,8 @@ class AdhesiveMovementRepository:
                 func.coalesce(func.sum(AdhesiveMovement.quantity), 0),
             )
             .where(
-                AdhesiveMovement.movement_date == movement_date,
+                AdhesiveMovement.movement_date >= start_date,
+                AdhesiveMovement.movement_date <= end_date,
                 AdhesiveMovement.deleted_at.is_(None),
                 AdhesiveMovement.direction.in_(
                     (

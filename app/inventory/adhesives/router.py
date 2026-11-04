@@ -12,6 +12,7 @@ from app.common.dependencies.permissions import ReferenceListAccess, require_per
 from app.common.schemas.pagination import paginated_response
 from app.common.schemas.response import ApiResponse
 from app.common.services.entity_history import EntityHistoryEntry
+from app.inventory.report_range import resolve_movement_report_range
 from app.inventory.schemas import DrumLineHistoryEntry, DrumLineHistorySummary
 from app.inventory.catalog import (
     ADHESIVE_CODE_CREATE,
@@ -341,9 +342,20 @@ async def adhesive_line_history_summary(
 async def adhesive_movement_day_report(
     service: AdhesiveServiceDependency,
     current_user: CurrentUserDependency,
-    report_date: Annotated[date, Query(alias="date")],
     _: Annotated[CurrentUser, Depends(require_permission(ADHESIVES_REPORT_READ))],
+    report_date: Annotated[date | None, Query(alias="date")] = None,
+    start_date: Annotated[date | None, Query(alias="start_date")] = None,
+    end_date: Annotated[date | None, Query(alias="end_date")] = None,
 ) -> ApiResponse[list[AdhesiveDayReportRow]]:
+    start, end = resolve_movement_report_range(
+        report_date=report_date,
+        start_date=start_date,
+        end_date=end_date,
+    )
     return ApiResponse(
-        data=await service.day_report(report_date=report_date, permissions=current_user.permissions),
+        data=await service.day_report(
+            start_date=start,
+            end_date=end,
+            permissions=current_user.permissions,
+        ),
     )

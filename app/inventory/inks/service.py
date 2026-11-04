@@ -1094,7 +1094,8 @@ class InkService:
     async def day_report(
         self,
         *,
-        report_date: date,
+        start_date: date,
+        end_date: date,
         permissions: frozenset[str],
     ) -> list[InkDayReportRow]:
         can_view_price = self._can_view_price(permissions)
@@ -1102,14 +1103,14 @@ class InkService:
         if not active_lines:
             return []
 
-        day_totals = await self.movements.day_totals(report_date)
+        day_totals = await self.movements.day_totals(start_date, end_date)
         rows: list[InkDayReportRow] = []
 
         for line in active_lines:
             in_d, in_q, out_d, out_q = day_totals.get(
                 line.id, (Decimal("0"), Decimal("0"), Decimal("0"), Decimal("0"))
             )
-            closing_drums, closing_qty = await self.movements.sum_through_date(line.id, report_date)
+            closing_drums, closing_qty = await self.movements.sum_through_date(line.id, end_date)
             if (
                 in_d == 0
                 and in_q == 0
