@@ -10,6 +10,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.inventory.adhesives.models import AdhesiveBrand, AdhesiveCode
+from app.inventory.solvents.models import SolventBrand, SolventName
 from app.inventory.inks.models import InkBrand, InkColor
 
 from app.core.permissions import has_permission
@@ -18,6 +19,7 @@ from app.inventory.catalog import (
     CYLINDER_VIEW_PRICE,
     INK_VIEW_PRICE,
     MATERIAL_VIEW_PRICE,
+    SOLVENT_VIEW_PRICE,
 )
 from app.inventory.dashboard.repository import DashboardRepository
 from app.inventory.pricing import valuation_unit_price
@@ -45,6 +47,9 @@ from app.inventory.dashboard.schemas import (
     StockByCompany,
     TopConsumedAdhesiveLine,
     TopConsumedInkLine,
+    TopConsumedSolventLine,
+    SolventsDashboard,
+    SolventsDashboardKpis,
 )
 
 
@@ -463,6 +468,103 @@ class DashboardService:
             date_from=date_from,
             date_to=date_to,
             kpis=AdhesivesDashboardKpis(
+                active_lines=active_lines,
+                total_qty_on_hand=self._quantize(total_qty),
+                out_of_stock_lines=out_of_stock,
+                stock_value=self._quantize(stock_value) if can_view_price else None,
+                valued_line_count=valued_count if can_view_price else 0,
+            ),
+            movement_buckets=[
+                MovementActivityBucket(
+                    bucket_start=bucket,
+                    in_kg=self._quantize(in_q),
+                    out_kg=self._quantize(out_q),
+                )
+                for bucket, in_q, out_q in movement_rows
+            ],
+            stock_by_company=[
+                StockByCompany(company_name=name, total_qty=self._quantize(qty))
+                for name, qty in stock_by_company
+            ],
+            top_consumed=top_consumed,
+        )
+
+    async def solvents_overview(
+        self,
+        *,
+        range_params: DashboardRange,
+        permissions: frozenset[str],
+    ) -> SolventsDashboard:
+        date_from, date_to, weekly = self._resolve_range(range_params)
+        can_view_price = has_permission(permissions, SOLVENT_VIEW_PRICE)
+
+        lines = await self.repo.list_active_solvent_lines()
+        active_lines = len(lines)
+        total_qty = sum((Decimal(line.total_qty or 0) for line in lines), Decimal("0"))
+        out_of_stock = sum(
+            1 for line in lines if (line.total_qty or Decimal("0")) <= 0
+        )
+
+        stock_value = Decimal("0")
+        valued_count = 0
+        if can_view_price:
+            for line in lines:
+                qty = Decimal(line.total_qty or 0)
+                rate = line.solvent_rate
+                if qty > 0 and rate is not None:
+                    stock_value += qty * Decimal(rate)
+                    valued_count += 1
+
+        movement_rows = await self.repo.solvent_movement_buckets(
+            date_from=date_from,
+            date_to=date_to,
+            weekly=weekly,
+        )
+        stock_by_company = await self.repo.solvent_stock_qty_by_company()
+        out_by_line = await self.repo.solvent_line_out_qty_in_range(
+            date_from=date_from,
+            date_to=date_to,
+        )
+
+        line_labels: dict[UUID, str] = {}
+        brand_ids = {line.brand_id for line in lines}
+        name_ids = {line.solvent_name_id for line in lines}
+        if brand_ids:
+            brand_rows = await self.session.execute(
+                select(SolventBrand).where(SolventBrand.id.in_(brand_ids))
+            )
+            brands = {row.id: row.name for row in brand_rows.scalars()}
+        else:
+            brands = {}
+        if name_ids:
+            name_rows = await self.session.execute(
+                select(SolventName).where(SolventName.id.in_(name_ids))
+            )
+            names = {row.id: row.name for row in name_rows.scalars()}
+        else:
+            names = {}
+        for line in lines:
+            line_labels[line.id] = (
+                f"{brands.get(line.brand_id, '')} · {names.get(line.solvent_name_id, '')}"
+            )
+
+        top_consumed: list[TopConsumedSolventLine] = []
+        for line_id, out_qty in sorted(out_by_line.items(), key=lambda pair: pair[1], reverse=True)[:5]:
+            label = line_labels.get(line_id)
+            if label is None:
+                continue
+            top_consumed.append(
+                TopConsumedSolventLine(
+                    solvent_line_id=str(line_id),
+                    name=label,
+                    out_qty=self._quantize(out_qty),
+                )
+            )
+
+        return SolventsDashboard(
+            date_from=date_from,
+            date_to=date_to,
+            kpis=SolventsDashboardKpis(
                 active_lines=active_lines,
                 total_qty_on_hand=self._quantize(total_qty),
                 out_of_stock_lines=out_of_stock,

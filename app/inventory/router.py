@@ -64,6 +64,13 @@ from app.inventory.adhesives.router import (
     adhesive_movements_router,
     adhesives_router,
 )
+from app.inventory.solvents.router import (
+    solvent_brands_router,
+    solvent_lines_router,
+    solvent_movements_router,
+    solvent_names_router,
+    solvents_router,
+)
 from app.inventory.inks.router import (
     ink_brands_router,
     ink_colors_router,
@@ -91,6 +98,11 @@ router.include_router(adhesive_brands_router)
 router.include_router(adhesives_router)
 router.include_router(adhesive_lines_router)
 router.include_router(adhesive_movements_router)
+router.include_router(solvent_names_router)
+router.include_router(solvent_brands_router)
+router.include_router(solvents_router)
+router.include_router(solvent_lines_router)
+router.include_router(solvent_movements_router)
 
 
 @units_router.get("", response_model=ApiResponse[list[UnitResponse]])

@@ -14,6 +14,7 @@ from app.identity.org_repository import OrganizationRepository
 from app.identity.schemas import AddressResponse, format_address_label
 from app.inventory.cylinders.models import Cylinder, CylinderReturn
 from app.inventory.adhesives.models import AdhesiveBrand, AdhesiveCode
+from app.inventory.solvents.models import SolventBrand, SolventName
 from app.inventory.inks.models import InkBrand, InkColor
 from app.inventory.models import InventoryUnit, MaterialCategory
 
@@ -34,6 +35,7 @@ _FK_FIELDS: dict[str, tuple[str, str]] = {
     "color_id": ("Color", "ink_color"),
     "ink_color_id": ("Color", "ink_color"),
     "adhesive_code_id": ("Code", "adhesive_code"),
+    "solvent_name_id": ("Name", "solvent_name"),
     "brand_id": ("Brand", "ink_brand"),
     "material_id": ("Material", "material"),
     "category_id": ("Category", "material"),
@@ -168,6 +170,10 @@ class AuditDisplayService:
             await self._load_adhesive_codes(kinds["adhesive_code"])
         if "adhesive_brand" in kinds and kinds["adhesive_brand"]:
             await self._load_adhesive_brands(kinds["adhesive_brand"])
+        if "solvent_name" in kinds and kinds["solvent_name"]:
+            await self._load_solvent_names(kinds["solvent_name"])
+        if "solvent_brand" in kinds and kinds["solvent_brand"]:
+            await self._load_solvent_brands(kinds["solvent_brand"])
         if "material" in kinds and kinds["material"]:
             await self._load_materials(kinds["material"])
         if "address" in kinds and kinds["address"]:
@@ -211,6 +217,9 @@ class AuditDisplayService:
             case "adhesive_code":
                 await self._load_adhesive_codes({entity_id})
                 return self._cache.get("adhesive_code", {}).get(entity_id)
+            case "solvent_name":
+                await self._load_solvent_names({entity_id})
+                return self._cache.get("solvent_name", {}).get(entity_id)
             case "ink_sheet":
                 from app.inventory.inks.models import InkSheet
 
@@ -235,6 +244,18 @@ class AuditDisplayService:
                 await self._load_companies({company_id})
                 name = self._cache.get("company", {}).get(company_id)
                 return f"Adhesive sheet · {name}" if name else None
+            case "solvent_sheet":
+                from app.inventory.solvents.models import SolventSheet
+
+                result = await self.session.execute(
+                    select(SolventSheet.company_id).where(SolventSheet.id == entity_id)
+                )
+                company_id = result.scalar_one_or_none()
+                if company_id is None:
+                    return None
+                await self._load_companies({company_id})
+                name = self._cache.get("company", {}).get(company_id)
+                return f"Solvent sheet · {name}" if name else None
             case "organization":
                 org = await self.org.get_organization()
                 return org.name if org else None
@@ -353,6 +374,28 @@ class AuditDisplayService:
         for row in result.scalars().all():
             cache[row.id] = row.name
 
+    async def _load_solvent_names(self, ids: set[UUID]) -> None:
+        cache = self._cache.setdefault("solvent_name", {})
+        missing = ids - cache.keys()
+        if not missing:
+            return
+        result = await self.session.execute(
+            select(SolventName).where(SolventName.id.in_(missing))
+        )
+        for row in result.scalars().all():
+            cache[row.id] = row.name
+
+    async def _load_solvent_brands(self, ids: set[UUID]) -> None:
+        cache = self._cache.setdefault("solvent_brand", {})
+        missing = ids - cache.keys()
+        if not missing:
+            return
+        result = await self.session.execute(
+            select(SolventBrand).where(SolventBrand.id.in_(missing))
+        )
+        for row in result.scalars().all():
+            cache[row.id] = row.name
+
     async def _load_materials(self, ids: set[UUID]) -> None:
         cache = self._cache.setdefault("material", {})
         missing = ids - cache.keys()
@@ -392,6 +435,7 @@ class AuditDisplayService:
                 "user",
                 "ink_color",
                 "adhesive_code",
+                "solvent_name",
             ):
                 kind_map = {
                     "company": "company",
@@ -399,6 +443,7 @@ class AuditDisplayService:
                     "user": "user",
                     "ink_color": "ink_color",
                     "adhesive_code": "adhesive_code",
+                    "solvent_name": "solvent_name",
                 }
                 kinds.setdefault(kind_map[entity_type], set()).add(entity_id)
         await self._load_kinds(kinds)

@@ -642,3 +642,104 @@ class DashboardRepository:
             .order_by(AdhesiveLine.created_at)
         )
         return list(result.scalars().all())
+
+    async def solvent_movement_buckets(
+        self,
+        *,
+        date_from: date,
+        date_to: date,
+        weekly: bool,
+    ) -> list[tuple[date, Decimal, Decimal]]:
+        from app.inventory.solvents.models import SolventMovement
+
+        if weekly:
+            bucket_expr = cast(func.date_trunc("week", SolventMovement.movement_date), Date)
+        else:
+            bucket_expr = SolventMovement.movement_date
+
+        rows = await self.session.execute(
+            select(
+                bucket_expr,
+                SolventMovement.direction,
+                func.coalesce(func.sum(SolventMovement.quantity), 0),
+            )
+            .where(
+                SolventMovement.deleted_at.is_(None),
+                SolventMovement.movement_date >= date_from,
+                SolventMovement.movement_date <= date_to,
+                SolventMovement.direction.in_(
+                    (
+                        MaterialMovementDirection.IN.value,
+                        MaterialMovementDirection.OUT.value,
+                    )
+                ),
+            )
+            .group_by(bucket_expr, SolventMovement.direction)
+            .order_by(bucket_expr)
+        )
+        merged: dict[date, tuple[Decimal, Decimal]] = {}
+        for bucket, direction, sum_qty in rows.all():
+            if bucket is None:
+                continue
+            in_q, out_q = merged.get(bucket, (Decimal("0"), Decimal("0")))
+            if direction == MaterialMovementDirection.IN.value:
+                in_q += Decimal(sum_qty)
+            else:
+                out_q += Decimal(sum_qty)
+            merged[bucket] = (in_q, out_q)
+        return [(bucket, in_q, out_q) for bucket, (in_q, out_q) in sorted(merged.items())]
+
+    async def solvent_stock_qty_by_company(self) -> list[tuple[str, Decimal]]:
+        from app.inventory.solvents.models import SolventLine, SolventSheet
+
+        rows = await self.session.execute(
+            select(Company.name, func.coalesce(func.sum(SolventLine.total_qty), 0))
+            .select_from(SolventLine)
+            .join(SolventSheet, SolventLine.solvent_sheet_id == SolventSheet.id)
+            .join(Company, SolventSheet.company_id == Company.id)
+            .where(
+                SolventLine.deleted_at.is_(None),
+                SolventSheet.deleted_at.is_(None),
+                Company.deleted_at.is_(None),
+            )
+            .group_by(Company.name)
+            .order_by(func.sum(SolventLine.total_qty).desc())
+        )
+        return [(name, Decimal(qty or 0)) for name, qty in rows.all()]
+
+    async def solvent_line_out_qty_in_range(
+        self,
+        *,
+        date_from: date,
+        date_to: date,
+    ) -> dict[UUID, Decimal]:
+        from app.inventory.solvents.models import SolventMovement
+
+        rows = await self.session.execute(
+            select(
+                SolventMovement.solvent_line_id,
+                func.coalesce(func.sum(SolventMovement.quantity), 0),
+            )
+            .where(
+                SolventMovement.deleted_at.is_(None),
+                SolventMovement.movement_date >= date_from,
+                SolventMovement.movement_date <= date_to,
+                SolventMovement.direction == MaterialMovementDirection.OUT.value,
+            )
+            .group_by(SolventMovement.solvent_line_id)
+        )
+        return {line_id: Decimal(qty or 0) for line_id, qty in rows.all()}
+
+    async def list_active_solvent_lines(self) -> list:
+        from app.inventory.solvents.models import SolventLine, SolventSheet
+
+        result = await self.session.execute(
+            select(SolventLine)
+            .join(SolventSheet, SolventLine.solvent_sheet_id == SolventSheet.id)
+            .where(
+                SolventLine.deleted_at.is_(None),
+                SolventSheet.deleted_at.is_(None),
+            )
+            .order_by(SolventLine.created_at)
+        )
+        return list(result.scalars().all())

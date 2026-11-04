@@ -171,3 +171,26 @@ class AdhesivesDashboard(BaseModel):
     movement_buckets: list[MovementActivityBucket]
     stock_by_company: list[StockByCompany]
     top_consumed: list[TopConsumedAdhesiveLine]
+
+
+class TopConsumedSolventLine(BaseModel):
+    solvent_line_id: str
+    name: str
+    out_qty: Decimal
+
+
+class SolventsDashboardKpis(BaseModel):
+    active_lines: int
+    total_qty_on_hand: Decimal
+    out_of_stock_lines: int
+    stock_value: Decimal | None = None
+    valued_line_count: int = 0
+
+
+class SolventsDashboard(BaseModel):
+    date_from: date
+    date_to: date
+    kpis: SolventsDashboardKpis
+    movement_buckets: list[MovementActivityBucket]
+    stock_by_company: list[StockByCompany]
+    top_consumed: list[TopConsumedSolventLine]

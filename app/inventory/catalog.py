@@ -74,6 +74,21 @@ ADHESIVE_HISTORY = build_permission(INVENTORY_MODULE, "adhesive", "history")
 
 ADHESIVES_REPORT_READ = build_permission(INVENTORY_MODULE, "adhesives_report", "read")
 
+SOLVENT_NAME_CREATE = build_permission(INVENTORY_MODULE, "solvent_name", "create")
+SOLVENT_NAME_READ = build_permission(INVENTORY_MODULE, "solvent_name", "read")
+SOLVENT_NAME_UPDATE = build_permission(INVENTORY_MODULE, "solvent_name", "update")
+SOLVENT_NAME_DELETE = build_permission(INVENTORY_MODULE, "solvent_name", "delete")
+SOLVENT_NAME_HISTORY = build_permission(INVENTORY_MODULE, "solvent_name", "history")
+
+SOLVENT_CREATE = build_permission(INVENTORY_MODULE, "solvent", "create")
+SOLVENT_READ = build_permission(INVENTORY_MODULE, "solvent", "read")
+SOLVENT_UPDATE = build_permission(INVENTORY_MODULE, "solvent", "update")
+SOLVENT_DELETE = build_permission(INVENTORY_MODULE, "solvent", "delete")
+SOLVENT_VIEW_PRICE = build_permission(INVENTORY_MODULE, "solvent", "view_price")
+SOLVENT_HISTORY = build_permission(INVENTORY_MODULE, "solvent", "history")
+
+SOLVENTS_REPORT_READ = build_permission(INVENTORY_MODULE, "solvents_report", "read")
+
 _CATALOG: dict[str, tuple[str, ...]] = {
     "unit": ("create", "read", "update", "delete"),
     "material": ("create", "read", "update", "delete", "view_price", "history"),
@@ -89,6 +104,9 @@ _CATALOG: dict[str, tuple[str, ...]] = {
     "adhesive_code": ("create", "read", "update", "delete", "history"),
     "adhesive": ("create", "read", "update", "delete", "view_price", "history"),
     "adhesives_report": ("read",),
+    "solvent_name": ("create", "read", "update", "delete", "history"),
+    "solvent": ("create", "read", "update", "delete", "view_price", "history"),
+    "solvents_report": ("read",),
 }
 
 

@@ -7,7 +7,7 @@ from fastapi import APIRouter, Depends
 from app.common.dependencies.auth import CurrentUser, CurrentUserDependency
 from app.common.dependencies.permissions import require_permission
 from app.common.schemas.response import ApiResponse
-from app.inventory.catalog import ADHESIVE_READ, CYLINDER_READ, INK_READ, MATERIAL_READ
+from app.inventory.catalog import ADHESIVE_READ, CYLINDER_READ, INK_READ, MATERIAL_READ, SOLVENT_READ
 from app.inventory.dashboard.dependencies import DashboardServiceDependency
 from app.inventory.dashboard.schemas import (
     DashboardRange,
@@ -15,6 +15,7 @@ from app.inventory.dashboard.schemas import (
     AdhesivesDashboard,
     InksDashboard,
     MaterialsDashboard,
+    SolventsDashboard,
 )
 
 dashboard_router = APIRouter(prefix="/dashboard", tags=["Inventory Dashboard"])
@@ -74,6 +75,21 @@ async def adhesives_dashboard(
 ) -> ApiResponse[AdhesivesDashboard]:
     return ApiResponse(
         data=await service.adhesives_overview(
+            range_params=range_params,
+            permissions=current_user.permissions,
+        )
+    )
+
+
+@dashboard_router.get("/solvents", response_model=ApiResponse[SolventsDashboard])
+async def solvents_dashboard(
+    service: DashboardServiceDependency,
+    range_params: Annotated[DashboardRange, Depends()],
+    current_user: CurrentUserDependency,
+    _: Annotated[CurrentUser, Depends(require_permission(SOLVENT_READ))],
+) -> ApiResponse[SolventsDashboard]:
+    return ApiResponse(
+        data=await service.solvents_overview(
             range_params=range_params,
             permissions=current_user.permissions,
         )
