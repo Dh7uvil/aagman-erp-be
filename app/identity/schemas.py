@@ -791,6 +791,7 @@ class AuditLogResponse(BaseModel):
     action: str
     entity_type: str
     entity_id: UUID | None
+    entity_label: str | None = None
     module: str
     ip_address: str | None
     status: str
@@ -812,6 +813,7 @@ class AuditLogDetailResponse(AuditLogResponse):
 class AuditLogSummaryResponse(BaseModel):
     total_events: int
     unique_users: int
+    modules: list[str] = Field(default_factory=list)
     failed_attempts: int
     admin_actions: int
 

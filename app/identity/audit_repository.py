@@ -191,6 +191,21 @@ class AuditLogRepository:
             int(admin_actions or 0),
         )
 
+    async def list_distinct_modules(
+        self,
+        *,
+        common_filter: BaseFilter | None = None,
+    ) -> list[str]:
+        criteria = self._criteria(common_filter=common_filter)
+        statement = (
+            select(AuditLog.module)
+            .where(*criteria)
+            .distinct()
+            .order_by(AuditLog.module.asc())
+        )
+        result = await self.session.execute(statement)
+        return [str(row[0]) for row in result.all() if row[0]]
+
     async def get(self, audit_log_id: UUID) -> AuditLog | None:
         result = await self.session.execute(select(AuditLog).where(AuditLog.id == audit_log_id))
         return result.scalar_one_or_none()

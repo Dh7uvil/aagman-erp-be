@@ -1,6 +1,6 @@
 """Inventory API tests."""
 
-from datetime import date
+from datetime import date, timedelta
 from uuid import uuid4
 
 from httpx import AsyncClient
@@ -313,6 +313,76 @@ async def test_material_history_keeps_purchase_price_when_micron_price_changes(
     )
     assert summary.status_code == 200, summary.text
     assert float(summary.json()["data"]["last_purchase_price"]) == 88
+
+
+async def test_movement_report_date_range(client: AsyncClient) -> None:
+    email, password = await provision_admin()
+    headers = await login_headers(client, email, password)
+    _product_id, _micron_id, material_id = await _seed_product_micron_sku(client, headers)
+
+    day1 = (date.today() - timedelta(days=2)).isoformat()
+    day2 = (date.today() - timedelta(days=1)).isoformat()
+
+    movement_in = await client.post(
+        "/api/v1/inventory/material-movements",
+        headers=headers,
+        json={
+            "category_id": material_id,
+            "movement_date": day1,
+            "direction": "IN",
+            "rolls": "3",
+            "kilograms": "0",
+        },
+    )
+    assert movement_in.status_code == 201, movement_in.text
+
+    movement_out = await client.post(
+        "/api/v1/inventory/material-movements",
+        headers=headers,
+        json={
+            "category_id": material_id,
+            "movement_date": day2,
+            "direction": "OUT",
+            "rolls": "1",
+            "kilograms": "0",
+        },
+    )
+    assert movement_out.status_code == 201, movement_out.text
+
+    range_report = await client.get(
+        "/api/v1/inventory/material-movements/report",
+        headers=headers,
+        params={"start_date": day1, "end_date": day2},
+    )
+    assert range_report.status_code == 200, range_report.text
+    row = next(row for row in range_report.json()["data"] if row["category_id"] == material_id)
+    assert float(row["in_rolls"]) == 3
+    assert float(row["out_rolls"]) == 1
+    assert float(row["closing_rolls"]) == 12
+
+    single_day = await client.get(
+        "/api/v1/inventory/material-movements/report",
+        headers=headers,
+        params={"date": day2},
+    )
+    assert single_day.status_code == 200, single_day.text
+    day2_row = next(row for row in single_day.json()["data"] if row["category_id"] == material_id)
+    assert float(day2_row["in_rolls"]) == 0
+    assert float(day2_row["out_rolls"]) == 1
+    assert float(day2_row["closing_rolls"]) == 12
+
+    same_day_range = await client.get(
+        "/api/v1/inventory/material-movements/report",
+        headers=headers,
+        params={"start_date": day2, "end_date": day2},
+    )
+    assert same_day_range.status_code == 200, same_day_range.text
+    range_day2_row = next(
+        row for row in same_day_range.json()["data"] if row["category_id"] == material_id
+    )
+    assert float(range_day2_row["in_rolls"]) == float(day2_row["in_rolls"])
+    assert float(range_day2_row["out_rolls"]) == float(day2_row["out_rolls"])
+    assert float(range_day2_row["closing_rolls"]) == float(day2_row["closing_rolls"])
 
 
 async def test_day_report_lists_all_materials_without_daily_movements(client: AsyncClient) -> None:

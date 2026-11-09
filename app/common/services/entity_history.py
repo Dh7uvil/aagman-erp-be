@@ -9,7 +9,8 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.common.schemas.pagination import PageParams
-from app.common.services.audit import audit_field_changes, jsonable_value
+from app.common.services.audit import jsonable_value
+from app.common.services.audit_display import AuditDisplayService
 from app.identity.audit_repository import AuditLogRepository
 from app.identity.models import User
 from app.identity.schemas import AuditLogUserSummary
@@ -58,6 +59,8 @@ class EntityHistoryService:
             result = await self.repo.session.execute(select(User).where(User.id.in_(user_ids)))
             users_by_id = {user.id: user for user in result.scalars().all()}
 
+        display = AuditDisplayService(self.repo.session)
+        await display.preload_for_logs(rows)
         entries: list[EntityHistoryEntry] = []
         for row in rows:
             old_values = row.old_values or {}
@@ -80,7 +83,7 @@ class EntityHistoryService:
             storage_key = str(storage_key_raw).strip() if storage_key_raw else None
             attachment_deleted = bool(new_values.get("deleted")) if kind == "attachment" else False
             changes = (
-                audit_field_changes(old_values, new_values)
+                await display.humanize_changes(old_values, new_values)
                 if kind == "edit" and event is None
                 else []
             )

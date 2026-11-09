@@ -551,9 +551,10 @@ class CylinderService:
         return {row.id: row.name for row in result.scalars().all()}
 
     async def _cylinder_snapshot(self, row: Cylinder) -> dict[str, object]:
+        company_names = await self._company_names({row.company_id})
         return {
             "cylinder_number": row.cylinder_number,
-            "company_id": str(row.company_id),
+            "company_name": company_names.get(row.company_id, ""),
             "product_name": row.product_name,
             "cylinder_count": row.cylinder_count,
             "color_count": row.color_count,

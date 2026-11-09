@@ -28,6 +28,18 @@
     "identity.warehouse.delete",
     "identity.warehouse.read",
     "identity.warehouse.update",
+    "inventory.adhesive.create",
+    "inventory.adhesive.delete",
+    "inventory.adhesive.history",
+    "inventory.adhesive.read",
+    "inventory.adhesive.update",
+    "inventory.adhesive.view_price",
+    "inventory.adhesive_code.create",
+    "inventory.adhesive_code.delete",
+    "inventory.adhesive_code.history",
+    "inventory.adhesive_code.read",
+    "inventory.adhesive_code.update",
+    "inventory.adhesives_report.read",
     "inventory.cylinder.create",
     "inventory.cylinder.delete",
     "inventory.cylinder.history",
@@ -46,6 +58,22 @@
     "inventory.cylinder_return.delete",
     "inventory.cylinder_return.read",
     "inventory.cylinder_return.update",
+    "inventory.ink.create",
+    "inventory.ink.delete",
+    "inventory.ink.history",
+    "inventory.ink.read",
+    "inventory.ink.update",
+    "inventory.ink.view_price",
+    "inventory.ink_color.create",
+    "inventory.ink_color.delete",
+    "inventory.ink_color.history",
+    "inventory.ink_color.read",
+    "inventory.ink_color.update",
+    "inventory.ink_image.create",
+    "inventory.ink_image.delete",
+    "inventory.ink_image.read",
+    "inventory.ink_image.update",
+    "inventory.inks_report.read",
     "inventory.material.create",
     "inventory.material.delete",
     "inventory.material.history",
@@ -53,6 +81,18 @@
     "inventory.material.update",
     "inventory.material.view_price",
     "inventory.materials_report.read",
+    "inventory.solvent.create",
+    "inventory.solvent.delete",
+    "inventory.solvent.history",
+    "inventory.solvent.read",
+    "inventory.solvent.update",
+    "inventory.solvent.view_price",
+    "inventory.solvent_name.create",
+    "inventory.solvent_name.delete",
+    "inventory.solvent_name.history",
+    "inventory.solvent_name.read",
+    "inventory.solvent_name.update",
+    "inventory.solvents_report.read",
     "inventory.unit.create",
     "inventory.unit.delete",
     "inventory.unit.read",
@@ -150,6 +190,66 @@
         "read",
         "update",
         "delete"
+      ],
+      "ink_color": [
+        "create",
+        "read",
+        "update",
+        "delete",
+        "history"
+      ],
+      "ink": [
+        "create",
+        "read",
+        "update",
+        "delete",
+        "view_price",
+        "history"
+      ],
+      "ink_image": [
+        "create",
+        "read",
+        "update",
+        "delete"
+      ],
+      "inks_report": [
+        "read"
+      ],
+      "adhesive_code": [
+        "create",
+        "read",
+        "update",
+        "delete",
+        "history"
+      ],
+      "adhesive": [
+        "create",
+        "read",
+        "update",
+        "delete",
+        "view_price",
+        "history"
+      ],
+      "adhesives_report": [
+        "read"
+      ],
+      "solvent_name": [
+        "create",
+        "read",
+        "update",
+        "delete",
+        "history"
+      ],
+      "solvent": [
+        "create",
+        "read",
+        "update",
+        "delete",
+        "view_price",
+        "history"
+      ],
+      "solvents_report": [
+        "read"
       ]
     }
   }

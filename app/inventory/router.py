@@ -25,6 +25,7 @@ from app.inventory.catalog import (
     UNIT_UPDATE,
 )
 from app.inventory.dependencies import InventoryServiceDependency
+from app.inventory.report_range import resolve_movement_report_range
 from app.inventory.schemas import (
     CategoryCreate,
     CategoryFilter,
@@ -57,6 +58,27 @@ movements_router = APIRouter(prefix="/material-movements", tags=["Material Movem
 
 from app.inventory.dashboard.router import dashboard_router
 from app.inventory.cylinders.router import cylinders_router, returns_router
+from app.inventory.adhesives.router import (
+    adhesive_brands_router,
+    adhesive_codes_router,
+    adhesive_lines_router,
+    adhesive_movements_router,
+    adhesives_router,
+)
+from app.inventory.solvents.router import (
+    solvent_brands_router,
+    solvent_lines_router,
+    solvent_movements_router,
+    solvent_names_router,
+    solvents_router,
+)
+from app.inventory.inks.router import (
+    ink_brands_router,
+    ink_colors_router,
+    ink_lines_router,
+    ink_movements_router,
+    inks_router,
+)
 
 router = APIRouter(prefix="/inventory", tags=["Inventory"])
 router.include_router(units_router)
@@ -67,6 +89,21 @@ router.include_router(movements_router)
 router.include_router(cylinders_router)
 router.include_router(returns_router)
 router.include_router(dashboard_router)
+router.include_router(ink_colors_router)
+router.include_router(ink_brands_router)
+router.include_router(inks_router)
+router.include_router(ink_lines_router)
+router.include_router(ink_movements_router)
+router.include_router(adhesive_codes_router)
+router.include_router(adhesive_brands_router)
+router.include_router(adhesives_router)
+router.include_router(adhesive_lines_router)
+router.include_router(adhesive_movements_router)
+router.include_router(solvent_names_router)
+router.include_router(solvent_brands_router)
+router.include_router(solvents_router)
+router.include_router(solvent_lines_router)
+router.include_router(solvent_movements_router)
 
 
 @units_router.get("", response_model=ApiResponse[list[UnitResponse]])
@@ -390,10 +427,23 @@ async def list_movements(
 async def movement_day_report(
     current_user: CurrentUserDependency,
     service: InventoryServiceDependency,
-    report_date: Annotated[date, Query(alias="date")],
     _: Annotated[CurrentUser, Depends(require_permission(MATERIALS_REPORT_READ))],
+    report_date: Annotated[date | None, Query(alias="date")] = None,
+    start_date: Annotated[date | None, Query(alias="start_date")] = None,
+    end_date: Annotated[date | None, Query(alias="end_date")] = None,
 ) -> ApiResponse[list[DayReportRow]]:
-    return ApiResponse(data=await service.day_report(report_date=report_date, permissions=current_user.permissions))
+    start, end = resolve_movement_report_range(
+        report_date=report_date,
+        start_date=start_date,
+        end_date=end_date,
+    )
+    return ApiResponse(
+        data=await service.day_report(
+            start_date=start,
+            end_date=end,
+            permissions=current_user.permissions,
+        ),
+    )
 
 
 @movements_router.get("/{movement_id}", response_model=ApiResponse[MovementResponse])
