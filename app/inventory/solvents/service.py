@@ -2,10 +2,9 @@
 
 from __future__ import annotations
 
-import uuid
 from collections.abc import Mapping
 from datetime import date
-from decimal import Decimal, ROUND_HALF_UP
+from decimal import ROUND_HALF_UP, Decimal
 from uuid import UUID
 
 from sqlalchemy import select
@@ -16,18 +15,10 @@ from app.common.schemas.filters import BaseFilter
 from app.common.schemas.pagination import PageParams
 from app.common.services.audit import AuditWriter, audit_field_changes, jsonable_value
 from app.common.services.entity_history import EntityHistoryEntry, EntityHistoryService
-from app.common.utils.files import (
-    MIME_JPEG,
-    MIME_PDF,
-    MIME_PNG,
-    MIME_WEBP,
-    validate_upload,
-)
-from app.core.enums import AuditAction, INVENTORY_MODULE, MaterialMovementDirection
+from app.core.enums import INVENTORY_MODULE, AuditAction, MaterialMovementDirection
 from app.core.exceptions import (
     DuplicateResourceError,
     InsufficientStockError,
-    PermissionDeniedError,
     ResourceNotFoundError,
     ValidationError,
 )
@@ -36,37 +27,42 @@ from app.db.session import transaction
 from app.identity.models import Company, User
 from app.identity.schemas import AuditLogUserSummary
 from app.inventory.catalog import SOLVENT_VIEW_PRICE
-from app.inventory.solvents.models import SolventBrand, SolventName, SolventLine, SolventMovement, SolventSheet
+from app.inventory.models import InventoryUnit
+from app.inventory.pricing import compute_avg_price
+from app.inventory.repository import UnitRepository
+from app.inventory.schemas import DrumLineHistoryEntry, DrumLineHistorySummary
+from app.inventory.solvents.models import (
+    SolventLine,
+    SolventName,
+    SolventSheet,
+)
 from app.inventory.solvents.repository import (
     SolventBrandRepository,
-    SolventNameRepository,
     SolventLineRepository,
     SolventMovementRepository,
+    SolventNameRepository,
     SolventSheetRepository,
 )
 from app.inventory.solvents.schemas import (
     SolventBrandCreate,
     SolventBrandResponse,
     SolventBrandUpdate,
+    SolventDayReportRow,
+    SolventLineListItem,
+    SolventLineResponse,
+    SolventLineUpsert,
     SolventNameCreate,
     SolventNameResponse,
     SolventNameUpdate,
     SolventNameUsageLine,
     SolventNameUsageResponse,
-    SolventDayReportRow,
-    SolventLineResponse,
-    SolventLineUpsert,
     SolventSheetCreate,
-    SolventLineListItem,
     SolventSheetListItem,
     SolventSheetResponse,
     SolventSheetUpdate,
     SolventStockOutCreate,
 )
-from app.inventory.models import InventoryUnit
-from app.inventory.pricing import compute_avg_price
-from app.inventory.repository import UnitRepository
-from app.inventory.schemas import DrumLineHistoryEntry, DrumLineHistorySummary
+
 
 class SolventService:
     _DISPLAY_SCALE = Decimal("0.01")
@@ -108,7 +104,9 @@ class SolventService:
         return unit.id
 
     @staticmethod
-    def _line_totals(drum_count: Decimal, drum_qty: Decimal, solvent_rate: Decimal | None) -> tuple[Decimal, Decimal | None]:
+    def _line_totals(
+        drum_count: Decimal, drum_qty: Decimal, solvent_rate: Decimal | None
+    ) -> tuple[Decimal, Decimal | None]:
         total_qty = drum_count * drum_qty
         total_rate = (total_qty * solvent_rate) if solvent_rate is not None else None
         return total_qty, total_rate
@@ -192,7 +190,9 @@ class SolventService:
             for row in line_rows
         ]
 
-    async def _sheet_response(self, sheet: SolventSheet, *, can_view_price: bool) -> SolventSheetResponse:
+    async def _sheet_response(
+        self, sheet: SolventSheet, *, can_view_price: bool
+    ) -> SolventSheetResponse:
         company = await self._require_company(sheet.company_id)
         line_rows = await self.lines.list_for_sheet(sheet.id)
         lines = await self._line_responses(line_rows, can_view_price=can_view_price)
@@ -217,8 +217,26 @@ class SolventService:
         filters: dict[str, object] = {}
         if is_active is not None:
             filters["is_active"] = is_active
-        rows, total = await self.names.list(page=page, common_filter=common_filter, filters=filters or None)
+        rows, total = await self.names.list(
+            page=page, common_filter=common_filter, filters=filters or None
+        )
         return [SolventNameResponse.model_validate(row) for row in rows], total
+
+    async def list_codes_for_export(
+        self,
+        *,
+        common_filter: BaseFilter | None,
+        is_active: bool | None,
+    ) -> list[SolventNameResponse]:
+        from app.common.export.fetch import assert_export_total, export_page
+
+        rows, total = await self.list_codes(
+            page=export_page(),
+            common_filter=common_filter,
+            is_active=is_active,
+        )
+        assert_export_total(total)
+        return rows
 
     async def get_code(self, solvent_name_id: UUID) -> SolventNameResponse:
         row = await self.names.get(solvent_name_id)
@@ -355,7 +373,9 @@ class SolventService:
         *,
         permissions: frozenset[str],
     ) -> DrumLineHistorySummary:
-        line, sheet, company, brand_name, code, unit_code = await self._line_history_context(line_id)
+        line, sheet, company, brand_name, code, unit_code = await self._line_history_context(
+            line_id
+        )
         can_view_price = self._can_view_price(permissions)
         last_in = await self.movements.last_stock_in(line_id)
         last_price = None
@@ -397,7 +417,9 @@ class SolventService:
             try:
                 row = await self.names.create(payload.model_dump())
             except IntegrityError as exc:
-                raise DuplicateResourceError("A solvent name with this name already exists") from exc
+                raise DuplicateResourceError(
+                    "A solvent name with this name already exists"
+                ) from exc
             await self.audit.write(
                 user_id=actor_user_id,
                 action=AuditAction.CREATE,
@@ -424,7 +446,9 @@ class SolventService:
             try:
                 updated = await self.names.update(solvent_name_id, values)
             except IntegrityError as exc:
-                raise DuplicateResourceError("A solvent name with this name already exists") from exc
+                raise DuplicateResourceError(
+                    "A solvent name with this name already exists"
+                ) from exc
             if updated is None:
                 raise ResourceNotFoundError("Solvent name not found")
             new = self._name_snapshot(updated)
@@ -465,7 +489,9 @@ class SolventService:
             )
             return SolventNameResponse.model_validate(deleted)
 
-    async def name_usage(self, solvent_name_id: UUID, *, permissions: frozenset[str]) -> SolventNameUsageResponse:
+    async def name_usage(
+        self, solvent_name_id: UUID, *, permissions: frozenset[str]
+    ) -> SolventNameUsageResponse:
         name_row = await self.names.get(solvent_name_id)
         if name_row is None:
             raise ResourceNotFoundError("Solvent name not found")
@@ -504,7 +530,9 @@ class SolventService:
                     drum_qty=self._display_decimal(line.drum_qty) or Decimal("0"),
                     drum_unit_code=unit_code,
                     total_qty=self._display_decimal(qty) or Decimal("0"),
-                    solvent_rate=self._display_decimal(line.solvent_rate) if can_view_price else None,
+                    solvent_rate=self._display_decimal(line.solvent_rate)
+                    if can_view_price
+                    else None,
                     total_rate=self._display_decimal(line.total_rate) if can_view_price else None,
                     avg_price_per_unit=avg_price,
                     price_unit_code=unit_code if avg_price is not None else None,
@@ -515,6 +543,19 @@ class SolventService:
             companies_with_stock=len(companies_with_stock),
             lines=usage_lines,
         )
+
+    async def name_usage_for_export(
+        self,
+        solvent_name_id: UUID,
+        *,
+        permissions: frozenset[str],
+    ) -> list[SolventNameUsageLine]:
+        from app.common.export.fetch import assert_export_total
+
+        response = await self.name_usage(solvent_name_id, permissions=permissions)
+        rows = response.lines
+        assert_export_total(len(rows))
+        return rows
 
     # Brands
 
@@ -528,8 +569,26 @@ class SolventService:
         filters: dict[str, object] = {}
         if is_active is not None:
             filters["is_active"] = is_active
-        rows, total = await self.brands.list(page=page, common_filter=common_filter, filters=filters or None)
+        rows, total = await self.brands.list(
+            page=page, common_filter=common_filter, filters=filters or None
+        )
         return [SolventBrandResponse.model_validate(row) for row in rows], total
+
+    async def list_brands_for_export(
+        self,
+        *,
+        common_filter: BaseFilter | None,
+        is_active: bool | None,
+    ) -> list[SolventBrandResponse]:
+        from app.common.export.fetch import assert_export_total, export_page
+
+        rows, total = await self.list_brands(
+            page=export_page(),
+            common_filter=common_filter,
+            is_active=is_active,
+        )
+        assert_export_total(total)
+        return rows
 
     async def get_brand(self, brand_id: UUID) -> SolventBrandResponse:
         row = await self.brands.get(brand_id)
@@ -542,16 +601,22 @@ class SolventService:
             try:
                 row = await self.brands.create(payload.model_dump())
             except IntegrityError as exc:
-                raise DuplicateResourceError("A solvent brand with this name already exists") from exc
+                raise DuplicateResourceError(
+                    "A solvent brand with this name already exists"
+                ) from exc
             return SolventBrandResponse.model_validate(row)
 
-    async def update_brand(self, brand_id: UUID, payload: SolventBrandUpdate) -> SolventBrandResponse:
+    async def update_brand(
+        self, brand_id: UUID, payload: SolventBrandUpdate
+    ) -> SolventBrandResponse:
         values = payload.model_dump(exclude_unset=True)
         async with transaction(self.session):
             try:
                 updated = await self.brands.update(brand_id, values)
             except IntegrityError as exc:
-                raise DuplicateResourceError("A solvent brand with this name already exists") from exc
+                raise DuplicateResourceError(
+                    "A solvent brand with this name already exists"
+                ) from exc
             if updated is None:
                 raise ResourceNotFoundError("Solvent brand not found")
             return SolventBrandResponse.model_validate(updated)
@@ -581,7 +646,11 @@ class SolventService:
             company_id=company_id,
         )
         can_view_price = self._can_view_price(permissions)
-        avg_map = await self._avg_prices_by_line_ids([line.id for line in line_rows]) if can_view_price else {}
+        avg_map = (
+            await self._avg_prices_by_line_ids([line.id for line in line_rows])
+            if can_view_price
+            else {}
+        )
         sheet_cache: dict[UUID, SolventSheet] = {}
         company_cache: dict[UUID, Company] = {}
         items: list[SolventLineListItem] = []
@@ -611,6 +680,24 @@ class SolventService:
             )
         return items, total
 
+    async def list_line_items_for_export(
+        self,
+        *,
+        common_filter: BaseFilter | None,
+        company_id: UUID | None,
+        permissions: frozenset[str],
+    ) -> list[SolventLineListItem]:
+        from app.common.export.fetch import assert_export_total, export_page
+
+        rows, total = await self.list_line_items(
+            page=export_page(),
+            common_filter=common_filter,
+            company_id=company_id,
+            permissions=permissions,
+        )
+        assert_export_total(total)
+        return rows
+
     async def list_sheets(
         self,
         *,
@@ -621,7 +708,9 @@ class SolventService:
         filters: dict[str, object] = {}
         if company_id is not None:
             filters["company_id"] = company_id
-        rows, total = await self.sheets.list(page=page, common_filter=common_filter, filters=filters or None)
+        rows, total = await self.sheets.list(
+            page=page, common_filter=common_filter, filters=filters or None
+        )
         items: list[SolventSheetListItem] = []
         for sheet in rows:
             company = await self._require_company(sheet.company_id)
@@ -642,7 +731,9 @@ class SolventService:
             )
         return items, total
 
-    async def get_sheet(self, sheet_id: UUID, *, permissions: frozenset[str]) -> SolventSheetResponse:
+    async def get_sheet(
+        self, sheet_id: UUID, *, permissions: frozenset[str]
+    ) -> SolventSheetResponse:
         sheet = await self.sheets.get(sheet_id)
         if sheet is None:
             raise ResourceNotFoundError("Solvent sheet not found")
@@ -683,7 +774,11 @@ class SolventService:
                 return await self._sheet_response(refreshed, can_view_price=can_view_price)
 
             sheet = await self.sheets.create(
-                {"company_id": payload.company_id, "created_by": actor_user_id, "updated_by": actor_user_id}
+                {
+                    "company_id": payload.company_id,
+                    "created_by": actor_user_id,
+                    "updated_by": actor_user_id,
+                }
             )
             if payload.lines:
                 await self._sync_lines(
@@ -843,7 +938,9 @@ class SolventService:
             if item.solvent_rate is not None and not can_view_price:
                 raise ValidationError("You do not have permission to set solvent rate")
 
-            total_qty, total_rate = self._line_totals(item.drum_count, item.drum_qty, item.solvent_rate)
+            total_qty, total_rate = self._line_totals(
+                item.drum_count, item.drum_qty, item.solvent_rate
+            )
 
             if item.id is None:
                 matched = self._find_line_by_brand_name(
@@ -1010,7 +1107,9 @@ class SolventService:
                         "available_quantity": str(current_qty),
                     },
                 )
-            _, total_rate = self._line_totals(new_drums, line.drum_qty or Decimal("0"), line.solvent_rate)
+            _, total_rate = self._line_totals(
+                new_drums, line.drum_qty or Decimal("0"), line.solvent_rate
+            )
             updated = await self.lines.update(
                 line.id,
                 {
@@ -1108,8 +1207,27 @@ class SolventService:
                     out_qty=self._display_decimal(out_q) or Decimal("0"),
                     closing_drums=self._display_decimal(closing_drums) or Decimal("0"),
                     closing_qty=self._display_decimal(closing_qty) or Decimal("0"),
-                    solvent_rate=self._display_decimal(line.solvent_rate) if can_view_price else None,
+                    solvent_rate=self._display_decimal(line.solvent_rate)
+                    if can_view_price
+                    else None,
                 )
             )
         rows.sort(key=lambda row: (row.company_name, row.brand_name, row.name))
+        return rows
+
+    async def solvents_day_report_for_export(
+        self,
+        *,
+        start_date: date,
+        end_date: date,
+        permissions: frozenset[str],
+    ) -> list[SolventDayReportRow]:
+        from app.common.export.fetch import assert_export_total
+
+        rows = await self.day_report(
+            start_date=start_date,
+            end_date=end_date,
+            permissions=permissions,
+        )
+        assert_export_total(len(rows))
         return rows

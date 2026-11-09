@@ -12,7 +12,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.common.schemas.filters import BaseFilter
 from app.common.schemas.pagination import PageParams
 from app.common.services.audit import AuditWriter, audit_field_changes
-from app.core.enums import INVENTORY_MODULE, AuditAction, MaterialCategoryKind, MaterialMovementDirection
+from app.core.enums import (
+    INVENTORY_MODULE,
+    AuditAction,
+    MaterialCategoryKind,
+    MaterialMovementDirection,
+)
 from app.core.exceptions import (
     DuplicateResourceError,
     InsufficientStockError,
@@ -23,9 +28,9 @@ from app.core.exceptions import (
 from app.core.permissions import has_permission
 from app.db.session import transaction
 from app.identity.models import Company, User
+from app.identity.schemas import AuditLogUserSummary
 from app.inventory.catalog import MATERIAL_VIEW_PRICE
 from app.inventory.models import InventoryUnit, MaterialCategory, MaterialMovement
-from app.identity.schemas import AuditLogUserSummary
 from app.inventory.pricing import compute_avg_price, merge_purchase_price_stats
 from app.inventory.repository import (
     CategoryRepository,
@@ -265,7 +270,9 @@ class InventoryService:
                 product_id=row.parent_id or row.id,
                 product_name=product.name if product else "",
                 company_id=product_company_id,
-                company_name=company_names.get(product_company_id, "") if product_company_id else "",
+                company_name=company_names.get(product_company_id, "")
+                if product_company_id
+                else "",
                 name=row.name,
                 price_per_unit=self._display_decimal(row.price_per_unit),
                 price_unit_id=row.price_unit_id,
@@ -385,7 +392,9 @@ class InventoryService:
             product = products.get(micron.parent_id) if micron and micron.parent_id else None
             unit = units.get(row.unit_id) if row.unit_id else None
             size_unit = units.get(row.size_unit_id) if row.size_unit_id else None
-            price_unit = units.get(micron.price_unit_id) if micron and micron.price_unit_id else None
+            price_unit = (
+                units.get(micron.price_unit_id) if micron and micron.price_unit_id else None
+            )
             size_code = size_unit.code if size_unit else ""
             size_val = self._display_decimal(row.size or Decimal("0")) or Decimal("0")
             company_id = product.company_id if product else None
@@ -405,7 +414,8 @@ class InventoryService:
                 unit_code=unit.code if unit else "",
                 unit_name=unit.name if unit else "",
                 name=row.name,
-                rolls_on_hand=self._display_decimal(row.rolls_on_hand or Decimal("0")) or Decimal("0"),
+                rolls_on_hand=self._display_decimal(row.rolls_on_hand or Decimal("0"))
+                or Decimal("0"),
                 total_kg=self._display_decimal(row.total_kg or Decimal("0")) or Decimal("0"),
                 price_per_unit=self._display_decimal(micron.price_per_unit) if micron else None,
                 price_unit_id=micron.price_unit_id if micron else None,
@@ -430,7 +440,9 @@ class InventoryService:
             )
 
     @staticmethod
-    def _movement_delta(direction: MaterialMovementDirection, rolls: Decimal, kg: Decimal) -> tuple[Decimal, Decimal]:
+    def _movement_delta(
+        direction: MaterialMovementDirection, rolls: Decimal, kg: Decimal
+    ) -> tuple[Decimal, Decimal]:
         if direction == MaterialMovementDirection.OUT:
             return -rolls, -kg
         return rolls, kg
@@ -483,8 +495,26 @@ class InventoryService:
         filters: dict[str, object] = {}
         if is_active is not None:
             filters["is_active"] = is_active
-        rows, total = await self.units.list(page=page, common_filter=common_filter, filters=filters or None)
+        rows, total = await self.units.list(
+            page=page, common_filter=common_filter, filters=filters or None
+        )
         return [UnitResponse.model_validate(row) for row in rows], total
+
+    async def list_units_for_export(
+        self,
+        *,
+        common_filter: BaseFilter | None = None,
+        is_active: bool | None = None,
+    ) -> list[UnitResponse]:
+        from app.common.export.fetch import assert_export_total, export_page
+
+        rows, total = await self.list_units(
+            page=export_page(),
+            common_filter=common_filter,
+            is_active=is_active,
+        )
+        assert_export_total(total)
+        return rows
 
     async def get_unit(self, unit_id: UUID) -> UnitResponse:
         row = await self._require_unit(unit_id)
@@ -681,7 +711,9 @@ class InventoryService:
                 raise ResourceNotFoundError("Micron not found")
             return await self._micron_response(updated, can_view_price=can_view_price)
 
-    async def delete_micron(self, micron_id: UUID, *, permissions: frozenset[str]) -> MicronResponse:
+    async def delete_micron(
+        self, micron_id: UUID, *, permissions: frozenset[str]
+    ) -> MicronResponse:
         await self._require_micron(micron_id)
         child_count = await self.categories.count_active_children(
             micron_id,
@@ -693,15 +725,15 @@ class InventoryService:
             deleted = await self.categories.soft_delete(micron_id)
             if deleted is None:
                 raise ResourceNotFoundError("Micron not found")
-            return await self._micron_response(deleted, can_view_price=self._can_view_price(permissions))
+            return await self._micron_response(
+                deleted, can_view_price=self._can_view_price(permissions)
+            )
 
     # SKUs
 
-    async def list_materials(
+    async def _material_query_parts(
         self,
         *,
-        page: PageParams,
-        common_filter: BaseFilter | None = None,
         parent_id: UUID | None = None,
         product_id: UUID | None = None,
         is_active: bool | None = None,
@@ -710,8 +742,7 @@ class InventoryService:
         kg_lt: Decimal | None = None,
         kg_gt: Decimal | None = None,
         company_id: UUID | None = None,
-        permissions: frozenset[str],
-    ) -> tuple[list[MaterialResponse], int]:
+    ) -> tuple[dict[str, object], list] | None:
         filters: dict[str, object] = {}
         if parent_id is not None:
             filters["parent_id"] = parent_id
@@ -730,21 +761,51 @@ class InventoryService:
         if company_id is not None:
             product_ids = await self.categories.product_ids_for_company(company_id)
             if not product_ids:
-                return [], 0
+                return None
             micron_ids_filter = await self.categories.micron_ids_for_products(product_ids)
             if not micron_ids_filter:
-                return [], 0
+                return None
         if product_id is not None:
             micron_ids = await self.categories.micron_ids_for_product(product_id)
             if not micron_ids:
-                return [], 0
+                return None
             if micron_ids_filter is not None:
                 micron_ids = [mid for mid in micron_ids if mid in micron_ids_filter]
                 if not micron_ids:
-                    return [], 0
+                    return None
             extra.append(MaterialCategory.parent_id.in_(micron_ids))
         elif micron_ids_filter is not None:
             extra.append(MaterialCategory.parent_id.in_(micron_ids_filter))
+        return filters, extra
+
+    async def list_materials(
+        self,
+        *,
+        page: PageParams,
+        common_filter: BaseFilter | None = None,
+        parent_id: UUID | None = None,
+        product_id: UUID | None = None,
+        is_active: bool | None = None,
+        size: Decimal | None = None,
+        rolls: Decimal | None = None,
+        kg_lt: Decimal | None = None,
+        kg_gt: Decimal | None = None,
+        company_id: UUID | None = None,
+        permissions: frozenset[str],
+    ) -> tuple[list[MaterialResponse], int]:
+        query = await self._material_query_parts(
+            parent_id=parent_id,
+            product_id=product_id,
+            is_active=is_active,
+            size=size,
+            rolls=rolls,
+            kg_lt=kg_lt,
+            kg_gt=kg_gt,
+            company_id=company_id,
+        )
+        if query is None:
+            return [], 0
+        filters, extra = query
         rows, total = await self.categories.list(
             page=page,
             common_filter=common_filter,
@@ -754,7 +815,48 @@ class InventoryService:
         can_view_price = self._can_view_price(permissions)
         return await self._material_responses(list(rows), can_view_price=can_view_price), total
 
-    async def get_material(self, material_id: UUID, *, permissions: frozenset[str]) -> MaterialResponse:
+    async def list_materials_for_export(
+        self,
+        *,
+        common_filter: BaseFilter | None = None,
+        parent_id: UUID | None = None,
+        product_id: UUID | None = None,
+        is_active: bool | None = None,
+        size: Decimal | None = None,
+        rolls: Decimal | None = None,
+        kg_lt: Decimal | None = None,
+        kg_gt: Decimal | None = None,
+        company_id: UUID | None = None,
+        permissions: frozenset[str],
+    ) -> list[MaterialResponse]:
+        from app.common.export.fetch import assert_export_total, export_page
+
+        query = await self._material_query_parts(
+            parent_id=parent_id,
+            product_id=product_id,
+            is_active=is_active,
+            size=size,
+            rolls=rolls,
+            kg_lt=kg_lt,
+            kg_gt=kg_gt,
+            company_id=company_id,
+        )
+        if query is None:
+            return []
+        filters, extra = query
+        rows, total = await self.categories.list(
+            page=export_page(),
+            common_filter=common_filter,
+            filters=filters or None,
+            extra_criteria=extra,
+        )
+        assert_export_total(total)
+        can_view_price = self._can_view_price(permissions)
+        return await self._material_responses(list(rows), can_view_price=can_view_price)
+
+    async def get_material(
+        self, material_id: UUID, *, permissions: frozenset[str]
+    ) -> MaterialResponse:
         row = await self._require_sku(material_id)
         return await self._material_response(row, can_view_price=self._can_view_price(permissions))
 
@@ -849,21 +951,27 @@ class InventoryService:
         async with transaction(self.session):
             current_rolls = sku.rolls_on_hand or Decimal("0")
             current_kg = sku.total_kg or Decimal("0")
-            rolls_delta = (rolls_target - current_rolls) if rolls_target is not None else Decimal("0")
+            rolls_delta = (
+                (rolls_target - current_rolls) if rolls_target is not None else Decimal("0")
+            )
             kg_delta = (kg_target - current_kg) if kg_target is not None else Decimal("0")
 
             rolls_dir: MaterialMovementDirection | None = None
             movement_rolls = Decimal("0")
             if rolls_target is not None and rolls_delta != 0:
                 rolls_dir = (
-                    MaterialMovementDirection.IN if rolls_delta > 0 else MaterialMovementDirection.OUT
+                    MaterialMovementDirection.IN
+                    if rolls_delta > 0
+                    else MaterialMovementDirection.OUT
                 )
                 movement_rolls = abs(rolls_delta)
 
             kg_dir: MaterialMovementDirection | None = None
             movement_kg = Decimal("0")
             if kg_target is not None and kg_delta != 0:
-                kg_dir = MaterialMovementDirection.IN if kg_delta > 0 else MaterialMovementDirection.OUT
+                kg_dir = (
+                    MaterialMovementDirection.IN if kg_delta > 0 else MaterialMovementDirection.OUT
+                )
                 movement_kg = abs(kg_delta)
 
             async def record_stock_adjustment(
@@ -961,7 +1069,9 @@ class InventoryService:
                 entity_id=row.id,
                 old_values=old_snapshot,
             )
-            return await self._material_response(deleted, can_view_price=self._can_view_price(permissions))
+            return await self._material_response(
+                deleted, can_view_price=self._can_view_price(permissions)
+            )
 
     async def _material_snapshot(self, row: MaterialCategory) -> dict[str, object]:
         micron, product = await self._sku_hierarchy(row)
@@ -1028,7 +1138,9 @@ class InventoryService:
         movement_ids = [entry_id for _kind, entry_id in refs]
         movements = await self.material_history_repo.get_movements_by_ids(movement_ids)
         user_ids = [
-            uid for uid in (movement.created_by for movement in movements.values()) if uid is not None
+            uid
+            for uid in (movement.created_by for movement in movements.values())
+            if uid is not None
         ]
         users_by_id: dict[UUID, User] = {}
         if user_ids:
@@ -1183,7 +1295,9 @@ class InventoryService:
             raise ValidationError("Enter at least one of rolls or kilograms")
 
         can_view_price = self._can_view_price(permissions)
-        if (payload.price_per_unit is not None or payload.price_unit_id is not None) and not can_view_price:
+        if (
+            payload.price_per_unit is not None or payload.price_unit_id is not None
+        ) and not can_view_price:
             raise ValidationError("You do not have permission to set purchase price")
 
         async with transaction(self.session):
@@ -1295,9 +1409,7 @@ class InventoryService:
                 unit_ids.append(micron.price_unit_id)
         units = await self.unit_lookup.get_units_by_ids(unit_ids)
         avg_prices = (
-            await self._avg_prices_by_sku_ids([sku.id for sku in skus])
-            if can_view_price
-            else {}
+            await self._avg_prices_by_sku_ids([sku.id for sku in skus]) if can_view_price else {}
         )
         rows: list[DayReportRow] = []
         for sku in skus:
@@ -1305,7 +1417,9 @@ class InventoryService:
             product = products.get(micron.parent_id) if micron and micron.parent_id else None
             unit = units.get(sku.unit_id) if sku.unit_id else None
             size_unit = units.get(sku.size_unit_id) if sku.size_unit_id else None
-            price_unit = units.get(micron.price_unit_id) if micron and micron.price_unit_id else None
+            price_unit = (
+                units.get(micron.price_unit_id) if micron and micron.price_unit_id else None
+            )
             size_code = size_unit.code if size_unit else ""
             in_r, in_k, out_r, out_k = day_totals.get(
                 sku.id,
@@ -1339,4 +1453,21 @@ class InventoryService:
                     avg_price_per_unit=avg_prices.get(sku.id) if can_view_price else None,
                 ),
             )
+        return rows
+
+    async def materials_day_report_for_export(
+        self,
+        *,
+        start_date: date,
+        end_date: date,
+        permissions: frozenset[str],
+    ) -> list[DayReportRow]:
+        from app.common.export.fetch import assert_export_total
+
+        rows = await self.day_report(
+            start_date=start_date,
+            end_date=end_date,
+            permissions=permissions,
+        )
+        assert_export_total(len(rows))
         return rows

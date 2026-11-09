@@ -61,7 +61,9 @@ class OrganizationRepository:
         payload.setdefault("address_type", address_type.value)
         return await self.addresses.create(payload)
 
-    async def update_address(self, address_id: UUID, values: Mapping[str, object]) -> Address | None:
+    async def update_address(
+        self, address_id: UUID, values: Mapping[str, object]
+    ) -> Address | None:
         return await self.addresses.update(address_id, values)
 
     async def get_branch(self, branch_id: UUID) -> Branch | None:
@@ -97,7 +99,9 @@ class OrganizationRepository:
     async def get_department(self, department_id: UUID) -> Department | None:
         return await self.departments.get(department_id)
 
-    async def get_departments_by_ids(self, department_ids: Sequence[UUID]) -> dict[UUID, Department]:
+    async def get_departments_by_ids(
+        self, department_ids: Sequence[UUID]
+    ) -> dict[UUID, Department]:
         unique = list(dict.fromkeys(department_ids))
         if not unique:
             return {}

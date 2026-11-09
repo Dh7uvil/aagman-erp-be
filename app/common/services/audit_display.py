@@ -9,14 +9,14 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.common.services.audit import AuditFieldChange, audit_field_changes, jsonable_value
-from app.identity.models import Branch, Company, Department, Role, User, Warehouse
+from app.identity.models import Branch, Company, Department, Role, Warehouse
 from app.identity.org_repository import OrganizationRepository
 from app.identity.schemas import AddressResponse, format_address_label
-from app.inventory.cylinders.models import Cylinder, CylinderReturn
 from app.inventory.adhesives.models import AdhesiveBrand, AdhesiveCode
-from app.inventory.solvents.models import SolventBrand, SolventName
+from app.inventory.cylinders.models import Cylinder, CylinderReturn
 from app.inventory.inks.models import InkBrand, InkColor
 from app.inventory.models import InventoryUnit, MaterialCategory
+from app.inventory.solvents.models import SolventBrand, SolventName
 
 # field key -> (display label for the row, lookup kind)
 _FK_FIELDS: dict[str, tuple[str, str]] = {
@@ -330,7 +330,9 @@ class AuditDisplayService:
         missing = ids - cache.keys()
         if not missing:
             return
-        result = await self.session.execute(select(InventoryUnit).where(InventoryUnit.id.in_(missing)))
+        result = await self.session.execute(
+            select(InventoryUnit).where(InventoryUnit.id.in_(missing))
+        )
         for row in result.scalars().all():
             cache[row.id] = row.code
 
@@ -379,9 +381,7 @@ class AuditDisplayService:
         missing = ids - cache.keys()
         if not missing:
             return
-        result = await self.session.execute(
-            select(SolventName).where(SolventName.id.in_(missing))
-        )
+        result = await self.session.execute(select(SolventName).where(SolventName.id.in_(missing)))
         for row in result.scalars().all():
             cache[row.id] = row.name
 

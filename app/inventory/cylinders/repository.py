@@ -13,7 +13,13 @@ from app.common.repositories.search import RelatedSearch
 from app.common.schemas.filters import BaseFilter
 from app.common.schemas.pagination import PageParams
 from app.identity.models import Company
-from app.inventory.cylinders.models import CylinderReturn, Cylinder, CylinderColor, CylinderSize, CylinderPause
+from app.inventory.cylinders.models import (
+    Cylinder,
+    CylinderColor,
+    CylinderPause,
+    CylinderReturn,
+    CylinderSize,
+)
 
 
 class CylinderRepository:
@@ -111,28 +117,36 @@ class CylinderReturnRepository:
 
     async def next_return_number(self) -> str:
         count = await self.session.scalar(
-            select(func.count()).select_from(CylinderReturn).where(CylinderReturn.deleted_at.is_(None))
+            select(func.count())
+            .select_from(CylinderReturn)
+            .where(CylinderReturn.deleted_at.is_(None))
         )
         return f"CR-{(int(count or 0) + 1):05d}"
 
 
 async def load_cylinders(session: AsyncSession, cylinder_id: UUID) -> list[CylinderSize]:
     result = await session.execute(
-        select(CylinderSize).where(CylinderSize.cylinder_id == cylinder_id).order_by(CylinderSize.position)
+        select(CylinderSize)
+        .where(CylinderSize.cylinder_id == cylinder_id)
+        .order_by(CylinderSize.position)
     )
     return list(result.scalars().all())
 
 
 async def load_colors(session: AsyncSession, cylinder_id: UUID) -> list[CylinderColor]:
     result = await session.execute(
-        select(CylinderColor).where(CylinderColor.cylinder_id == cylinder_id).order_by(CylinderColor.position)
+        select(CylinderColor)
+        .where(CylinderColor.cylinder_id == cylinder_id)
+        .order_by(CylinderColor.position)
     )
     return list(result.scalars().all())
 
 
 async def load_pauses(session: AsyncSession, cylinder_id: UUID) -> list[CylinderPause]:
     result = await session.execute(
-        select(CylinderPause).where(CylinderPause.cylinder_id == cylinder_id).order_by(CylinderPause.paused_at)
+        select(CylinderPause)
+        .where(CylinderPause.cylinder_id == cylinder_id)
+        .order_by(CylinderPause.paused_at)
     )
     return list(result.scalars().all())
 
@@ -142,7 +156,9 @@ async def replace_cylinders(
     cylinder_id: UUID,
     cylinders: list[dict[str, object]],
 ) -> None:
-    existing = await session.execute(select(CylinderSize).where(CylinderSize.cylinder_id == cylinder_id))
+    existing = await session.execute(
+        select(CylinderSize).where(CylinderSize.cylinder_id == cylinder_id)
+    )
     for row in existing.scalars().all():
         await session.delete(row)
     await session.flush()
@@ -162,7 +178,9 @@ async def replace_colors(
     cylinder_id: UUID,
     colors: list[dict[str, object]],
 ) -> None:
-    existing = await session.execute(select(CylinderColor).where(CylinderColor.cylinder_id == cylinder_id))
+    existing = await session.execute(
+        select(CylinderColor).where(CylinderColor.cylinder_id == cylinder_id)
+    )
     for row in existing.scalars().all():
         await session.delete(row)
     await session.flush()

@@ -14,11 +14,10 @@ from app.common.services.audit import AuditWriter
 from app.common.utils.files import MIME_JPEG, MIME_PNG, MIME_WEBP, validate_upload
 from app.common.utils.time import utcnow
 from app.core.config import get_settings
-from app.core.enums import AddressType, AuditAction, BranchStatus, IDENTITY_MODULE
+from app.core.enums import IDENTITY_MODULE, AddressType, AuditAction, BranchStatus
 from app.core.exceptions import DuplicateResourceError, ResourceNotFoundError, ValidationError
 from app.db.session import transaction
 from app.identity import local_storage
-from app.integrations.storage import S3Storage, build_org_logo_key, get_optional_storage
 from app.identity.models import Address, Branch, Department, Organization, User
 from app.identity.org_repository import OrganizationRepository
 from app.identity.repository import AccessRepository
@@ -39,6 +38,7 @@ from app.identity.schemas import (
     UserSummary,
     format_address_label,
 )
+from app.integrations.storage import S3Storage, build_org_logo_key, get_optional_storage
 
 LOGO_MAX_SIZE_MB = 2
 LOGO_ALLOWED_MIME_TYPES = (MIME_JPEG, MIME_PNG, MIME_WEBP)
@@ -122,7 +122,10 @@ class OrganizationService:
             for field in ("industry", "website", "contact_email", "phone"):
                 if field in values:
                     setattr(org, field, values[field])
-            if "fiscal_year_start_month" in values and values["fiscal_year_start_month"] is not None:
+            if (
+                "fiscal_year_start_month" in values
+                and values["fiscal_year_start_month"] is not None
+            ):
                 org.fiscal_year_start_month = int(values["fiscal_year_start_month"])
             if "fiscal_year_start_day" in values and values["fiscal_year_start_day"] is not None:
                 org.fiscal_year_start_day = int(values["fiscal_year_start_day"])
@@ -246,6 +249,22 @@ class OrganizationService:
         )
         return await self._branch_responses(list(branches)), total
 
+    async def list_branches_for_export(
+        self,
+        *,
+        common_filter: BaseFilter | None = None,
+        status: str | None = None,
+    ) -> list[BranchResponse]:
+        from app.common.export.fetch import assert_export_total, export_page
+
+        rows, total = await self.list_branches(
+            page=export_page(),
+            common_filter=common_filter,
+            status=status,
+        )
+        assert_export_total(total)
+        return rows
+
     async def create_branch(
         self,
         payload: BranchCreate,
@@ -355,6 +374,22 @@ class OrganizationService:
         )
         return await self._department_responses(list(departments)), total
 
+    async def list_departments_for_export(
+        self,
+        *,
+        common_filter: BaseFilter | None = None,
+        branch_id: UUID | None = None,
+    ) -> list[DepartmentResponse]:
+        from app.common.export.fetch import assert_export_total, export_page
+
+        rows, total = await self.list_departments(
+            page=export_page(),
+            common_filter=common_filter,
+            branch_id=branch_id,
+        )
+        assert_export_total(total)
+        return rows
+
     async def create_department(
         self,
         payload: DepartmentCreate,
@@ -423,7 +458,9 @@ class OrganizationService:
             await self.session.refresh(department)
             return (await self._department_responses([department]))[0]
 
-    async def delete_department(self, department_id: UUID, *, actor_user_id: UUID) -> DepartmentResponse:
+    async def delete_department(
+        self, department_id: UUID, *, actor_user_id: UUID
+    ) -> DepartmentResponse:
         async with transaction(self.session):
             department = await self._require_department(department_id)
             if await self.org.count_users_for_department(department_id) > 0:
@@ -503,7 +540,9 @@ class OrganizationService:
             address = await self.org.get_address(org.headquarters_address_id)
             headquarters = _address_response(address)
             if headquarters is not None:
-                settings = settings.model_copy(update={"headquarters": AddressPayload.model_validate(headquarters)})
+                settings = settings.model_copy(
+                    update={"headquarters": AddressPayload.model_validate(headquarters)}
+                )
         return OrganizationResponse(
             id=org.id,
             name=org.name,
@@ -590,7 +629,9 @@ class OrganizationService:
             for branch in branches
         ]
 
-    async def _department_responses(self, departments: list[Department]) -> list[DepartmentResponse]:
+    async def _department_responses(
+        self, departments: list[Department]
+    ) -> list[DepartmentResponse]:
         branch_ids = [department.branch_id for department in departments]
         manager_ids = [
             department.manager_id for department in departments if department.manager_id is not None

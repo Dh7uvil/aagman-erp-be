@@ -7,12 +7,18 @@ from fastapi import APIRouter, Depends
 from app.common.dependencies.auth import CurrentUser, CurrentUserDependency
 from app.common.dependencies.permissions import require_permission
 from app.common.schemas.response import ApiResponse
-from app.inventory.catalog import ADHESIVE_READ, CYLINDER_READ, INK_READ, MATERIAL_READ, SOLVENT_READ
+from app.inventory.catalog import (
+    ADHESIVE_READ,
+    CYLINDER_READ,
+    INK_READ,
+    MATERIAL_READ,
+    SOLVENT_READ,
+)
 from app.inventory.dashboard.dependencies import DashboardServiceDependency
 from app.inventory.dashboard.schemas import (
-    DashboardRange,
-    CylindersDashboard,
     AdhesivesDashboard,
+    CylindersDashboard,
+    DashboardRange,
     InksDashboard,
     MaterialsDashboard,
     SolventsDashboard,

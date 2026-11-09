@@ -10,7 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import InstrumentedAttribute
 from sqlalchemy.sql.elements import ColumnElement
 
-from app.common.repositories.search import RelatedSearch, USER_FIELDS, search_clause
+from app.common.repositories.search import USER_FIELDS, RelatedSearch, search_clause
 from app.common.schemas.filters import BaseFilter
 from app.common.schemas.pagination import PageParams
 from app.common.utils.time import utcnow
@@ -19,7 +19,6 @@ from app.core.permissions import build_permission
 from app.db.base import Base
 from app.identity.models import (
     Company,
-    Department,
     Organization,
     PasswordResetToken,
     Permission,
@@ -155,7 +154,9 @@ class AccessRepository:
         result = await self.session.execute(select(User).where(User.email == email))
         return result.scalar_one_or_none()
 
-    def _user_list_extra_criteria(self, user_filter: UserFilter | None) -> list[ColumnElement[bool]]:
+    def _user_list_extra_criteria(
+        self, user_filter: UserFilter | None
+    ) -> list[ColumnElement[bool]]:
         if user_filter is None:
             return []
         extra: list[ColumnElement[bool]] = []
@@ -362,7 +363,9 @@ class AccessRepository:
         await self.session.flush()
         return token
 
-    async def get_refresh_token_by_jti(self, jti: str, *, for_update: bool = False) -> RefreshToken | None:
+    async def get_refresh_token_by_jti(
+        self, jti: str, *, for_update: bool = False
+    ) -> RefreshToken | None:
         statement = select(RefreshToken).where(RefreshToken.jti == jti)
         if for_update:
             statement = statement.with_for_update()

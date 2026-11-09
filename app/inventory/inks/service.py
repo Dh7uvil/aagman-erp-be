@@ -5,7 +5,7 @@ from __future__ import annotations
 import uuid
 from collections.abc import Mapping
 from datetime import date
-from decimal import Decimal, ROUND_HALF_UP
+from decimal import ROUND_HALF_UP, Decimal
 from uuid import UUID
 
 from fastapi import UploadFile
@@ -25,7 +25,7 @@ from app.common.utils.files import (
     validate_upload,
 )
 from app.core.config import get_settings
-from app.core.enums import AuditAction, INVENTORY_MODULE, MaterialMovementDirection
+from app.core.enums import INVENTORY_MODULE, AuditAction, MaterialMovementDirection
 from app.core.exceptions import (
     DuplicateResourceError,
     InsufficientStockError,
@@ -46,7 +46,7 @@ from app.inventory.catalog import (
     INK_VIEW_PRICE,
 )
 from app.inventory.inks import storage as ink_storage
-from app.inventory.inks.models import InkBrand, InkColor, InkLine, InkMovement, InkSheet
+from app.inventory.inks.models import InkColor, InkLine, InkSheet
 from app.inventory.inks.repository import (
     InkBrandRepository,
     InkColorRepository,
@@ -66,10 +66,10 @@ from app.inventory.inks.schemas import (
     InkColorUsageResponse,
     InkDayReportRow,
     InkFileMeta,
+    InkLineListItem,
     InkLineResponse,
     InkLineUpsert,
     InkSheetCreate,
-    InkLineListItem,
     InkSheetListItem,
     InkSheetResponse,
     InkSheetUpdate,
@@ -130,7 +130,9 @@ class InkService:
         return unit.id
 
     @staticmethod
-    def _line_totals(drum_count: Decimal, drum_qty: Decimal, ink_rate: Decimal | None) -> tuple[Decimal, Decimal | None]:
+    def _line_totals(
+        drum_count: Decimal, drum_qty: Decimal, ink_rate: Decimal | None
+    ) -> tuple[Decimal, Decimal | None]:
         total_qty = drum_count * drum_qty
         total_rate = (total_qty * ink_rate) if ink_rate is not None else None
         return total_qty, total_rate
@@ -259,8 +261,26 @@ class InkService:
         filters: dict[str, object] = {}
         if is_active is not None:
             filters["is_active"] = is_active
-        rows, total = await self.colors.list(page=page, common_filter=common_filter, filters=filters or None)
+        rows, total = await self.colors.list(
+            page=page, common_filter=common_filter, filters=filters or None
+        )
         return [InkColorResponse.model_validate(row) for row in rows], total
+
+    async def list_colors_for_export(
+        self,
+        *,
+        common_filter: BaseFilter | None,
+        is_active: bool | None,
+    ) -> list[InkColorResponse]:
+        from app.common.export.fetch import assert_export_total, export_page
+
+        rows, total = await self.list_colors(
+            page=export_page(),
+            common_filter=common_filter,
+            is_active=is_active,
+        )
+        assert_export_total(total)
+        return rows
 
     async def get_color(self, color_id: UUID) -> InkColorResponse:
         row = await self.colors.get(color_id)
@@ -398,7 +418,9 @@ class InkService:
         *,
         permissions: frozenset[str],
     ) -> DrumLineHistorySummary:
-        line, sheet, company, brand_name, color_name, unit_code = await self._line_history_context(line_id)
+        line, sheet, company, brand_name, color_name, unit_code = await self._line_history_context(
+            line_id
+        )
         can_view_price = self._can_view_price(permissions)
         last_in = await self.movements.last_stock_in(line_id)
         last_price = None
@@ -508,7 +530,9 @@ class InkService:
             )
             return InkColorResponse.model_validate(deleted)
 
-    async def color_usage(self, color_id: UUID, *, permissions: frozenset[str]) -> InkColorUsageResponse:
+    async def color_usage(
+        self, color_id: UUID, *, permissions: frozenset[str]
+    ) -> InkColorUsageResponse:
         color = await self.colors.get(color_id)
         if color is None:
             raise ResourceNotFoundError("Ink color not found")
@@ -559,6 +583,19 @@ class InkService:
             lines=usage_lines,
         )
 
+    async def color_usage_for_export(
+        self,
+        color_id: UUID,
+        *,
+        permissions: frozenset[str],
+    ) -> list[InkColorUsageLine]:
+        from app.common.export.fetch import assert_export_total
+
+        response = await self.color_usage(color_id, permissions=permissions)
+        rows = response.lines
+        assert_export_total(len(rows))
+        return rows
+
     # Brands
 
     async def list_brands(
@@ -571,8 +608,26 @@ class InkService:
         filters: dict[str, object] = {}
         if is_active is not None:
             filters["is_active"] = is_active
-        rows, total = await self.brands.list(page=page, common_filter=common_filter, filters=filters or None)
+        rows, total = await self.brands.list(
+            page=page, common_filter=common_filter, filters=filters or None
+        )
         return [InkBrandResponse.model_validate(row) for row in rows], total
+
+    async def list_brands_for_export(
+        self,
+        *,
+        common_filter: BaseFilter | None,
+        is_active: bool | None,
+    ) -> list[InkBrandResponse]:
+        from app.common.export.fetch import assert_export_total, export_page
+
+        rows, total = await self.list_brands(
+            page=export_page(),
+            common_filter=common_filter,
+            is_active=is_active,
+        )
+        assert_export_total(total)
+        return rows
 
     async def get_brand(self, brand_id: UUID) -> InkBrandResponse:
         row = await self.brands.get(brand_id)
@@ -624,7 +679,11 @@ class InkService:
             company_id=company_id,
         )
         can_view_price = self._can_view_price(permissions)
-        avg_map = await self._avg_prices_by_line_ids([line.id for line in line_rows]) if can_view_price else {}
+        avg_map = (
+            await self._avg_prices_by_line_ids([line.id for line in line_rows])
+            if can_view_price
+            else {}
+        )
         sheet_cache: dict[UUID, InkSheet] = {}
         company_cache: dict[UUID, Company] = {}
         items: list[InkLineListItem] = []
@@ -654,6 +713,24 @@ class InkService:
             )
         return items, total
 
+    async def list_line_items_for_export(
+        self,
+        *,
+        common_filter: BaseFilter | None,
+        company_id: UUID | None,
+        permissions: frozenset[str],
+    ) -> list[InkLineListItem]:
+        from app.common.export.fetch import assert_export_total, export_page
+
+        rows, total = await self.list_line_items(
+            page=export_page(),
+            common_filter=common_filter,
+            company_id=company_id,
+            permissions=permissions,
+        )
+        assert_export_total(total)
+        return rows
+
     async def list_sheets(
         self,
         *,
@@ -664,7 +741,9 @@ class InkService:
         filters: dict[str, object] = {}
         if company_id is not None:
             filters["company_id"] = company_id
-        rows, total = await self.sheets.list(page=page, common_filter=common_filter, filters=filters or None)
+        rows, total = await self.sheets.list(
+            page=page, common_filter=common_filter, filters=filters or None
+        )
         items: list[InkSheetListItem] = []
         for sheet in rows:
             company = await self._require_company(sheet.company_id)
@@ -726,7 +805,11 @@ class InkService:
                 return await self._sheet_response(refreshed, can_view_price=can_view_price)
 
             sheet = await self.sheets.create(
-                {"company_id": payload.company_id, "created_by": actor_user_id, "updated_by": actor_user_id}
+                {
+                    "company_id": payload.company_id,
+                    "created_by": actor_user_id,
+                    "updated_by": actor_user_id,
+                }
             )
             if payload.lines:
                 await self._sync_lines(
@@ -1049,7 +1132,9 @@ class InkService:
                         "available_quantity": str(current_qty),
                     },
                 )
-            _, total_rate = self._line_totals(new_drums, line.drum_qty or Decimal("0"), line.ink_rate)
+            _, total_rate = self._line_totals(
+                new_drums, line.drum_qty or Decimal("0"), line.ink_rate
+            )
             updated = await self.lines.update(
                 line.id,
                 {
@@ -1152,6 +1237,23 @@ class InkService:
                 )
             )
         rows.sort(key=lambda row: (row.company_name, row.brand_name, row.color_name))
+        return rows
+
+    async def inks_day_report_for_export(
+        self,
+        *,
+        start_date: date,
+        end_date: date,
+        permissions: frozenset[str],
+    ) -> list[InkDayReportRow]:
+        from app.common.export.fetch import assert_export_total
+
+        rows = await self.day_report(
+            start_date=start_date,
+            end_date=end_date,
+            permissions=permissions,
+        )
+        assert_export_total(len(rows))
         return rows
 
     # Files
@@ -1269,9 +1371,7 @@ class InkService:
     ) -> tuple[bytes, str]:
         from app.common.models.audit_log import AuditLog
 
-        result = await self.session.execute(
-            select(AuditLog).where(AuditLog.id == audit_log_id)
-        )
+        result = await self.session.execute(select(AuditLog).where(AuditLog.id == audit_log_id))
         row = result.scalar_one_or_none()
         if row is None or row.entity_type != "ink_sheet" or row.entity_id != sheet_id:
             raise ResourceNotFoundError("Attachment not found")
@@ -1310,7 +1410,9 @@ class InkService:
         async with transaction(self.session):
             key = self._slot_storage_key(sheet, slot)
             filename = (
-                sheet.product_image_filename if slot == "product_image" else sheet.ink_image_filename
+                sheet.product_image_filename
+                if slot == "product_image"
+                else sheet.ink_image_filename
             )
             self._clear_file_meta(sheet, slot)
             await self.session.flush()

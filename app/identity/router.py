@@ -7,10 +7,13 @@ from fastapi import APIRouter, Depends, File, Query, Request, UploadFile, status
 from fastapi.responses import Response
 
 from app.common.dependencies.auth import CurrentUser, CurrentUserDependency
+from app.common.dependencies.export_scope import ExportScopeQuery, is_full_module_export
 from app.common.dependencies.pagination import PaginationDependency
 from app.common.dependencies.permissions import ReferenceListAccess, require_permission
+from app.common.export.service import compute_list_column_totals, export_catalog_table
 from app.common.schemas.pagination import paginated_response
 from app.common.schemas.response import ApiResponse
+from app.common.table_preferences.dependencies import TablePreferenceServiceDependency
 from app.common.utils.files import max_upload_bytes
 from app.core.exceptions import ValidationError
 from app.core.rate_limit import client_key, enforce_auth_rate_limit
@@ -20,25 +23,25 @@ from app.identity.catalog import (
     BRANCH_DELETE,
     BRANCH_READ,
     BRANCH_UPDATE,
+    COMPANY_CREATE,
+    COMPANY_DELETE,
+    COMPANY_READ,
+    COMPANY_UPDATE,
     DEPARTMENT_CREATE,
     DEPARTMENT_DELETE,
     DEPARTMENT_READ,
     DEPARTMENT_UPDATE,
-    SETTINGS_READ,
-    SETTINGS_UPDATE,
     PERMISSION_READ,
     ROLE_CREATE,
     ROLE_DELETE,
     ROLE_READ,
     ROLE_UPDATE,
+    SETTINGS_READ,
+    SETTINGS_UPDATE,
     USER_CREATE,
     USER_DELETE,
     USER_READ,
     USER_UPDATE,
-    COMPANY_CREATE,
-    COMPANY_DELETE,
-    COMPANY_READ,
-    COMPANY_UPDATE,
     WAREHOUSE_CREATE,
     WAREHOUSE_DELETE,
     WAREHOUSE_READ,
@@ -63,11 +66,11 @@ from app.identity.schemas import (
     BranchFilter,
     BranchResponse,
     BranchUpdate,
+    ChangePasswordRequest,
     CompanyCreate,
     CompanyFilter,
     CompanyResponse,
     CompanyUpdate,
-    ChangePasswordRequest,
     DepartmentCreate,
     DepartmentFilter,
     DepartmentResponse,
@@ -222,9 +225,11 @@ async def reset_password(
 @users_router.get("", response_model=ApiResponse[list[UserResponse]], summary="List users")
 async def list_users(
     page: PaginationDependency,
+    current_user: ReferenceListAccess,
     service: AuthServiceDependency,
+    preference_service: TablePreferenceServiceDependency,
     filters: Annotated[UserFilter, Depends()],
-    _: ReferenceListAccess,
+    include_column_totals: Annotated[bool, Query()] = False,
     role_ids: Annotated[list[UUID] | None, Query()] = None,
 ) -> ApiResponse[list[UserResponse]]:
     user_filter = filters
@@ -233,10 +238,52 @@ async def list_users(
             update={"role_ids": list(dict.fromkeys([*(filters.role_ids or []), *role_ids]))},
         )
     users, total = await service.list_users(page=page, user_filter=user_filter)
-    return paginated_response(users, params=page, total=total)
+    column_totals = None
+    if include_column_totals:
+        export_rows = await service.list_users_for_export(user_filter=user_filter)
+        column_totals = await compute_list_column_totals(
+            preference_service,
+            user_id=current_user.user_id,
+            table_key="identity.users",
+            permissions=current_user.permissions,
+            rows=export_rows,
+        )
+    return paginated_response(users, params=page, total=total, column_totals=column_totals)
 
 
-@users_router.post("", response_model=ApiResponse[UserDetailResponse], status_code=status.HTTP_201_CREATED)
+@users_router.get("/export", response_class=Response)
+async def export_users(
+    current_user: ReferenceListAccess,
+    service: AuthServiceDependency,
+    preference_service: TablePreferenceServiceDependency,
+    filters: Annotated[UserFilter, Depends()],
+    export_scope: ExportScopeQuery,
+    format: Annotated[str, Query(pattern="^(csv|xlsx)$")] = "csv",
+    role_ids: Annotated[list[UUID] | None, Query()] = None,
+) -> Response:
+    if is_full_module_export(export_scope):
+        user_filter = UserFilter()
+    else:
+        user_filter = filters
+        if role_ids:
+            user_filter = filters.model_copy(
+                update={"role_ids": list(dict.fromkeys([*(filters.role_ids or []), *role_ids]))},
+            )
+    rows = await service.list_users_for_export(user_filter=user_filter)
+    return await export_catalog_table(
+        preference_service,
+        user_id=current_user.user_id,
+        table_key="identity.users",
+        permissions=current_user.permissions,
+        filename_stem="users",
+        format=format,
+        rows=rows,
+    )
+
+
+@users_router.post(
+    "", response_model=ApiResponse[UserDetailResponse], status_code=status.HTTP_201_CREATED
+)
 async def create_user(
     payload: UserCreate,
     current_user: CurrentUserDependency,
@@ -321,15 +368,51 @@ async def assign_user_roles(
 @roles_router.get("", response_model=ApiResponse[list[RoleResponse]])
 async def list_roles(
     page: PaginationDependency,
+    current_user: ReferenceListAccess,
     service: AuthServiceDependency,
+    preference_service: TablePreferenceServiceDependency,
     filters: Annotated[RoleFilter, Depends()],
-    _: ReferenceListAccess,
+    include_column_totals: Annotated[bool, Query()] = False,
 ) -> ApiResponse[list[RoleResponse]]:
     roles, total = await service.list_roles(page=page, common_filter=filters)
-    return paginated_response(roles, params=page, total=total)
+    column_totals = None
+    if include_column_totals:
+        export_rows = await service.list_roles_for_export(common_filter=filters)
+        column_totals = await compute_list_column_totals(
+            preference_service,
+            user_id=current_user.user_id,
+            table_key="identity.roles",
+            permissions=current_user.permissions,
+            rows=export_rows,
+        )
+    return paginated_response(roles, params=page, total=total, column_totals=column_totals)
 
 
-@roles_router.post("", response_model=ApiResponse[RoleDetailResponse], status_code=status.HTTP_201_CREATED)
+@roles_router.get("/export", response_class=Response)
+async def export_roles(
+    current_user: ReferenceListAccess,
+    service: AuthServiceDependency,
+    preference_service: TablePreferenceServiceDependency,
+    filters: Annotated[RoleFilter, Depends()],
+    export_scope: ExportScopeQuery,
+    format: Annotated[str, Query(pattern="^(csv|xlsx)$")] = "csv",
+) -> Response:
+    scope_filters = RoleFilter() if is_full_module_export(export_scope) else filters
+    rows = await service.list_roles_for_export(common_filter=scope_filters)
+    return await export_catalog_table(
+        preference_service,
+        user_id=current_user.user_id,
+        table_key="identity.roles",
+        permissions=current_user.permissions,
+        filename_stem="roles",
+        format=format,
+        rows=rows,
+    )
+
+
+@roles_router.post(
+    "", response_model=ApiResponse[RoleDetailResponse], status_code=status.HTTP_201_CREATED
+)
 async def create_role(
     payload: RoleCreate,
     current_user: CurrentUserDependency,
@@ -495,19 +578,63 @@ async def delete_organization_logo(
 @branches_router.get("", response_model=ApiResponse[list[BranchResponse]])
 async def list_branches(
     page: PaginationDependency,
+    current_user: ReferenceListAccess,
     service: OrganizationServiceDependency,
+    preference_service: TablePreferenceServiceDependency,
     filters: Annotated[BranchFilter, Depends()],
-    _: ReferenceListAccess,
+    include_column_totals: Annotated[bool, Query()] = False,
 ) -> ApiResponse[list[BranchResponse]]:
+    status_filter = filters.status.value if filters.status is not None else None
     branches, total = await service.list_branches(
         page=page,
         common_filter=filters,
-        status=filters.status.value if filters.status is not None else None,
+        status=status_filter,
     )
-    return paginated_response(branches, params=page, total=total)
+    column_totals = None
+    if include_column_totals:
+        export_rows = await service.list_branches_for_export(
+            common_filter=filters,
+            status=status_filter,
+        )
+        column_totals = await compute_list_column_totals(
+            preference_service,
+            user_id=current_user.user_id,
+            table_key="identity.branches",
+            permissions=current_user.permissions,
+            rows=export_rows,
+        )
+    return paginated_response(branches, params=page, total=total, column_totals=column_totals)
 
 
-@branches_router.post("", response_model=ApiResponse[BranchResponse], status_code=status.HTTP_201_CREATED)
+@branches_router.get("/export", response_class=Response)
+async def export_branches(
+    current_user: ReferenceListAccess,
+    service: OrganizationServiceDependency,
+    preference_service: TablePreferenceServiceDependency,
+    filters: Annotated[BranchFilter, Depends()],
+    export_scope: ExportScopeQuery,
+    format: Annotated[str, Query(pattern="^(csv|xlsx)$")] = "csv",
+) -> Response:
+    scope_filters = BranchFilter() if is_full_module_export(export_scope) else filters
+    status_filter = scope_filters.status.value if scope_filters.status is not None else None
+    rows = await service.list_branches_for_export(
+        common_filter=scope_filters,
+        status=status_filter,
+    )
+    return await export_catalog_table(
+        preference_service,
+        user_id=current_user.user_id,
+        table_key="identity.branches",
+        permissions=current_user.permissions,
+        filename_stem="branches",
+        format=format,
+        rows=rows,
+    )
+
+
+@branches_router.post(
+    "", response_model=ApiResponse[BranchResponse], status_code=status.HTTP_201_CREATED
+)
 async def create_branch(
     payload: BranchCreate,
     current_user: CurrentUserDependency,
@@ -553,16 +680,56 @@ async def delete_branch(
 @departments_router.get("", response_model=ApiResponse[list[DepartmentResponse]])
 async def list_departments(
     page: PaginationDependency,
+    current_user: ReferenceListAccess,
     service: OrganizationServiceDependency,
+    preference_service: TablePreferenceServiceDependency,
     filters: Annotated[DepartmentFilter, Depends()],
-    _: ReferenceListAccess,
+    include_column_totals: Annotated[bool, Query()] = False,
 ) -> ApiResponse[list[DepartmentResponse]]:
     departments, total = await service.list_departments(
         page=page,
         common_filter=filters,
         branch_id=filters.branch_id,
     )
-    return paginated_response(departments, params=page, total=total)
+    column_totals = None
+    if include_column_totals:
+        export_rows = await service.list_departments_for_export(
+            common_filter=filters,
+            branch_id=filters.branch_id,
+        )
+        column_totals = await compute_list_column_totals(
+            preference_service,
+            user_id=current_user.user_id,
+            table_key="identity.departments",
+            permissions=current_user.permissions,
+            rows=export_rows,
+        )
+    return paginated_response(departments, params=page, total=total, column_totals=column_totals)
+
+
+@departments_router.get("/export", response_class=Response)
+async def export_departments(
+    current_user: ReferenceListAccess,
+    service: OrganizationServiceDependency,
+    preference_service: TablePreferenceServiceDependency,
+    filters: Annotated[DepartmentFilter, Depends()],
+    export_scope: ExportScopeQuery,
+    format: Annotated[str, Query(pattern="^(csv|xlsx)$")] = "csv",
+) -> Response:
+    scope_filters = DepartmentFilter() if is_full_module_export(export_scope) else filters
+    rows = await service.list_departments_for_export(
+        common_filter=scope_filters,
+        branch_id=scope_filters.branch_id,
+    )
+    return await export_catalog_table(
+        preference_service,
+        user_id=current_user.user_id,
+        table_key="identity.departments",
+        permissions=current_user.permissions,
+        filename_stem="departments",
+        format=format,
+        rows=rows,
+    )
 
 
 @departments_router.post(
@@ -619,15 +786,51 @@ async def delete_department(
 @companies_router.get("", response_model=ApiResponse[list[CompanyResponse]])
 async def list_companies(
     page: PaginationDependency,
+    current_user: ReferenceListAccess,
     service: CompanyServiceDependency,
+    preference_service: TablePreferenceServiceDependency,
     filters: Annotated[CompanyFilter, Depends()],
-    _: ReferenceListAccess,
+    include_column_totals: Annotated[bool, Query()] = False,
 ) -> ApiResponse[list[CompanyResponse]]:
     rows, total = await service.list(page=page, common_filter=filters)
-    return paginated_response(rows, params=page, total=total)
+    column_totals = None
+    if include_column_totals:
+        export_rows = await service.list_for_export(common_filter=filters)
+        column_totals = await compute_list_column_totals(
+            preference_service,
+            user_id=current_user.user_id,
+            table_key="identity.companies",
+            permissions=current_user.permissions,
+            rows=export_rows,
+        )
+    return paginated_response(rows, params=page, total=total, column_totals=column_totals)
 
 
-@companies_router.post("", response_model=ApiResponse[CompanyResponse], status_code=status.HTTP_201_CREATED)
+@companies_router.get("/export", response_class=Response)
+async def export_companies(
+    current_user: ReferenceListAccess,
+    service: CompanyServiceDependency,
+    preference_service: TablePreferenceServiceDependency,
+    filters: Annotated[CompanyFilter, Depends()],
+    export_scope: ExportScopeQuery,
+    format: Annotated[str, Query(pattern="^(csv|xlsx)$")] = "csv",
+) -> Response:
+    scope_filters = CompanyFilter() if is_full_module_export(export_scope) else filters
+    rows = await service.list_for_export(common_filter=scope_filters)
+    return await export_catalog_table(
+        preference_service,
+        user_id=current_user.user_id,
+        table_key="identity.companies",
+        permissions=current_user.permissions,
+        filename_stem="companies",
+        format=format,
+        rows=rows,
+    )
+
+
+@companies_router.post(
+    "", response_model=ApiResponse[CompanyResponse], status_code=status.HTTP_201_CREATED
+)
 async def create_company(
     payload: CompanyCreate,
     current_user: CurrentUserDependency,
@@ -673,15 +876,51 @@ async def delete_company(
 @warehouses_router.get("", response_model=ApiResponse[list[WarehouseResponse]])
 async def list_warehouses(
     page: PaginationDependency,
+    current_user: ReferenceListAccess,
     service: WarehouseServiceDependency,
+    preference_service: TablePreferenceServiceDependency,
     filters: Annotated[WarehouseFilter, Depends()],
-    _: ReferenceListAccess,
+    include_column_totals: Annotated[bool, Query()] = False,
 ) -> ApiResponse[list[WarehouseResponse]]:
     rows, total = await service.list(page=page, common_filter=filters)
-    return paginated_response(rows, params=page, total=total)
+    column_totals = None
+    if include_column_totals:
+        export_rows = await service.list_for_export(common_filter=filters)
+        column_totals = await compute_list_column_totals(
+            preference_service,
+            user_id=current_user.user_id,
+            table_key="identity.warehouses",
+            permissions=current_user.permissions,
+            rows=export_rows,
+        )
+    return paginated_response(rows, params=page, total=total, column_totals=column_totals)
 
 
-@warehouses_router.post("", response_model=ApiResponse[WarehouseResponse], status_code=status.HTTP_201_CREATED)
+@warehouses_router.get("/export", response_class=Response)
+async def export_warehouses(
+    current_user: ReferenceListAccess,
+    service: WarehouseServiceDependency,
+    preference_service: TablePreferenceServiceDependency,
+    filters: Annotated[WarehouseFilter, Depends()],
+    export_scope: ExportScopeQuery,
+    format: Annotated[str, Query(pattern="^(csv|xlsx)$")] = "csv",
+) -> Response:
+    scope_filters = WarehouseFilter() if is_full_module_export(export_scope) else filters
+    rows = await service.list_for_export(common_filter=scope_filters)
+    return await export_catalog_table(
+        preference_service,
+        user_id=current_user.user_id,
+        table_key="identity.warehouses",
+        permissions=current_user.permissions,
+        filename_stem="warehouses",
+        format=format,
+        rows=rows,
+    )
+
+
+@warehouses_router.post(
+    "", response_model=ApiResponse[WarehouseResponse], status_code=status.HTTP_201_CREATED
+)
 async def create_warehouse(
     payload: WarehouseCreate,
     current_user: CurrentUserDependency,
@@ -736,9 +975,12 @@ async def audit_log_summary(
 @audit_logs_router.get("", response_model=ApiResponse[list[AuditLogResponse]])
 async def list_audit_logs(
     page: PaginationDependency,
+    current_user: CurrentUserDependency,
     service: AuditLogServiceDependency,
+    preference_service: TablePreferenceServiceDependency,
     filters: Annotated[AuditLogFilter, Depends()],
     _: Annotated[CurrentUser, Depends(require_permission(AUDIT_LOG_READ))],
+    include_column_totals: Annotated[bool, Query()] = False,
 ) -> ApiResponse[list[AuditLogResponse]]:
     rows, total = await service.list_logs(
         page=page,
@@ -749,7 +991,90 @@ async def list_audit_logs(
         entity_type=filters.entity_type,
         entity_id=filters.entity_id,
     )
-    return paginated_response(rows, params=page, total=total)
+    column_totals = None
+    if include_column_totals:
+        export_rows = await service.list_logs_for_export(
+            common_filter=filters,
+            module=filters.module,
+            action=filters.action,
+            user_id=filters.user_id,
+            entity_type=filters.entity_type,
+            entity_id=filters.entity_id,
+        )
+        column_totals = await compute_list_column_totals(
+            preference_service,
+            user_id=current_user.user_id,
+            table_key="identity.audit_logs",
+            permissions=current_user.permissions,
+            rows=export_rows,
+        )
+    return paginated_response(rows, params=page, total=total, column_totals=column_totals)
+
+
+@audit_logs_router.get("/export", response_class=Response)
+async def export_audit_logs_table(
+    current_user: CurrentUserDependency,
+    service: AuditLogServiceDependency,
+    preference_service: TablePreferenceServiceDependency,
+    filters: Annotated[AuditLogFilter, Depends()],
+    _: Annotated[CurrentUser, Depends(require_permission(AUDIT_LOG_READ))],
+    export_scope: ExportScopeQuery,
+    format: Annotated[str, Query(pattern="^(csv|xlsx)$")] = "csv",
+) -> Response:
+    scope_filters = AuditLogFilter() if is_full_module_export(export_scope) else filters
+    rows = await service.list_logs_for_export(
+        common_filter=scope_filters,
+        module=scope_filters.module,
+        action=scope_filters.action,
+        user_id=scope_filters.user_id,
+        entity_type=scope_filters.entity_type,
+        entity_id=scope_filters.entity_id,
+    )
+    return await export_catalog_table(
+        preference_service,
+        user_id=current_user.user_id,
+        table_key="identity.audit_logs",
+        permissions=current_user.permissions,
+        filename_stem="audit-logs",
+        format=format,
+        rows=rows,
+    )
+
+
+@audit_logs_router.get("/export/download", response_class=Response)
+async def export_audit_logs_download(
+    service: AuditLogServiceDependency,
+    preference_service: TablePreferenceServiceDependency,
+    current_user: CurrentUserDependency,
+    filters: Annotated[AuditLogFilter, Depends()],
+    _: Annotated[CurrentUser, Depends(require_permission(AUDIT_LOG_READ))],
+    export_scope: ExportScopeQuery,
+    format: Annotated[str, Query(pattern="^(csv|xlsx)$")] = "csv",
+) -> Response:
+    from app.common.export.service import build_table_export
+
+    column_keys, _ = await preference_service.get_export_columns(
+        current_user.user_id,
+        "identity.audit_logs",
+        permissions=current_user.permissions,
+    )
+    scope_filters = AuditLogFilter() if is_full_module_export(export_scope) else filters
+    rows = await service.list_logs_for_export(
+        common_filter=scope_filters,
+        module=scope_filters.module,
+        action=scope_filters.action,
+        user_id=scope_filters.user_id,
+        entity_type=scope_filters.entity_type,
+        entity_id=scope_filters.entity_id,
+    )
+    return build_table_export(
+        table_key="identity.audit_logs",
+        rows=rows,
+        column_keys=column_keys,
+        permissions=current_user.permissions,
+        format=format,
+        filename_stem="audit-logs",
+    )
 
 
 @audit_logs_router.get("/export.csv", response_class=Response)

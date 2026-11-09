@@ -10,7 +10,9 @@ from app.inventory.cylinders.returns_service import CylinderReturnService
 from app.inventory.cylinders.service import CylinderService
 
 
-async def get_cylinder_service(session: Annotated[AsyncSession, Depends(get_db)]) -> CylinderService:
+async def get_cylinder_service(
+    session: Annotated[AsyncSession, Depends(get_db)],
+) -> CylinderService:
     return CylinderService(session)
 
 
@@ -21,4 +23,6 @@ async def get_cylinder_return_service(
 
 
 CylinderServiceDependency = Annotated[CylinderService, Depends(get_cylinder_service)]
-CylinderReturnServiceDependency = Annotated[CylinderReturnService, Depends(get_cylinder_return_service)]
+CylinderReturnServiceDependency = Annotated[
+    CylinderReturnService, Depends(get_cylinder_return_service)
+]

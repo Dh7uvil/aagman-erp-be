@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from decimal import Decimal
 from typing import Any
 from uuid import UUID
 
@@ -23,8 +22,9 @@ from app.common.utils.files import (
     MIME_WEBP,
     validate_upload,
 )
+from app.common.utils.time import utcnow
 from app.core.config import get_settings
-from app.core.enums import AuditAction, INVENTORY_MODULE, CylinderStatus
+from app.core.enums import INVENTORY_MODULE, AuditAction, CylinderStatus
 from app.core.exceptions import (
     DuplicateResourceError,
     PermissionDeniedError,
@@ -47,17 +47,17 @@ from app.inventory.catalog import (
     CYLINDER_VIEW_PRICE,
 )
 from app.inventory.cylinders import storage as cylinder_storage
+from app.inventory.cylinders.export_fields import total_cylinder_cost as compute_total_cylinder_cost
 from app.inventory.cylinders.models import Cylinder, CylinderPause
 from app.inventory.cylinders.repository import (
-    CylinderReturnRepository,
     CylinderRepository,
+    CylinderReturnRepository,
     load_colors,
     load_cylinders,
     load_pauses,
     replace_colors,
     replace_cylinders,
 )
-from app.common.utils.time import utcnow
 from app.inventory.cylinders.schemas import (
     CYLINDER_FILE_SLOTS,
     CylinderCreate,
@@ -137,11 +137,14 @@ class CylinderService:
                 color_count=row.color_count,
                 pet_size=row.pet_size,
                 cylinder_cost=row.cylinder_cost if can_view_price else None,
+                total_cylinder_cost=(
+                    compute_total_cylinder_cost(row.cylinder_cost, row.cylinder_count)
+                    if can_view_price
+                    else None
+                ),
                 cylinder_location=row.cylinder_location,
                 status=CylinderStatus(row.status),
-                cylinder_image=(
-                    self._file_meta(row, "cylinder_image") if can_view_image else None
-                ),
+                cylinder_image=(self._file_meta(row, "cylinder_image") if can_view_image else None),
                 created_at=row.created_at,
                 updated_at=row.updated_at,
             )
@@ -149,7 +152,31 @@ class CylinderService:
         ]
         return items, total
 
-    async def get_cylinder(self, cylinder_id: UUID, *, permissions: frozenset[str]) -> CylinderResponse:
+    async def list_cylinders_for_export(
+        self,
+        *,
+        common_filter: BaseFilter | None,
+        status: CylinderStatus | None,
+        company_id: UUID | None,
+        include_closed: bool,
+        permissions: frozenset[str],
+    ) -> list[CylinderListItem]:
+        from app.common.export.fetch import assert_export_total, export_page
+
+        rows, total = await self.list_cylinders(
+            page=export_page(),
+            common_filter=common_filter,
+            status=status,
+            company_id=company_id,
+            include_closed=include_closed,
+            permissions=permissions,
+        )
+        assert_export_total(total)
+        return rows
+
+    async def get_cylinder(
+        self, cylinder_id: UUID, *, permissions: frozenset[str]
+    ) -> CylinderResponse:
         row = await self._require_cylinder(cylinder_id)
         return await self._to_response(row, permissions=permissions, include_children=True)
 
@@ -220,7 +247,9 @@ class CylinderService:
         if "status" in values and values["status"] is not None:
             status_value = values["status"]
             values["status"] = (
-                status_value.value if isinstance(status_value, CylinderStatus) else str(status_value)
+                status_value.value
+                if isinstance(status_value, CylinderStatus)
+                else str(status_value)
             )
         if "company_id" in values and values["company_id"] is not None:
             await self._require_company(values["company_id"])
@@ -424,7 +453,9 @@ class CylinderService:
             )
             return await self._to_response(row, permissions=permissions, include_children=True)
 
-    async def read_file(self, cylinder_id: UUID, slot: str, *, permissions: frozenset[str]) -> tuple[bytes, str]:
+    async def read_file(
+        self, cylinder_id: UUID, slot: str, *, permissions: frozenset[str]
+    ) -> tuple[bytes, str]:
         if slot not in CYLINDER_FILE_SLOTS:
             raise ValidationError("Invalid file slot")
         if not has_permission(permissions, _SLOT_READ[slot]):
@@ -485,9 +516,7 @@ class CylinderService:
     ) -> tuple[bytes, str]:
         from app.common.models.audit_log import AuditLog
 
-        result = await self.session.execute(
-            select(AuditLog).where(AuditLog.id == audit_log_id)
-        )
+        result = await self.session.execute(select(AuditLog).where(AuditLog.id == audit_log_id))
         row = result.scalar_one_or_none()
         if row is None or row.entity_type != "cylinder" or row.entity_id != cylinder_id:
             raise ResourceNotFoundError("Attachment not found")

@@ -144,6 +144,7 @@ class CylinderListItem(BaseModel):
     color_count: int | None
     pet_size: str | None
     cylinder_cost: Decimal | None = None
+    total_cylinder_cost: Decimal | None = None
     cylinder_location: str | None
     status: CylinderStatus
     cylinder_image: CylinderFileMeta | None = None

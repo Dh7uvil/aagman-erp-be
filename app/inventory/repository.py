@@ -7,12 +7,10 @@ from datetime import date
 from decimal import Decimal
 from uuid import UUID
 
-from sqlalchemy import Select, func, literal, or_, select
+from sqlalchemy import func, literal, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import aliased
 from sqlalchemy.sql.elements import ColumnElement
-
-from app.inventory.pricing import PurchasePriceStats
 
 from app.common.models.audit_log import AuditLog
 from app.common.repositories.base import BaseRepository
@@ -21,6 +19,7 @@ from app.common.schemas.pagination import PageParams
 from app.core.enums import MaterialCategoryKind, MaterialMovementDirection
 from app.identity.models import Company
 from app.inventory.models import InventoryUnit, MaterialCategory, MaterialMovement
+from app.inventory.pricing import PurchasePriceStats
 
 
 class UnitRepository:
@@ -72,7 +71,9 @@ class CategoryRepository:
             session,
             MaterialCategory,
             allowed_sort_fields=frozenset({"created_at", "updated_at", "name", "size"}),
-            allowed_filter_fields=frozenset({"is_active", "parent_id", "category_kind", "company_id"}),
+            allowed_filter_fields=frozenset(
+                {"is_active", "parent_id", "category_kind", "company_id"}
+            ),
             search_fields=frozenset({"name"}),
         )
 
@@ -94,10 +95,34 @@ class CategoryRepository:
             extra_criteria=extra_criteria,
         )
 
+    async def sum_material_stock(
+        self,
+        *,
+        common_filter: BaseFilter | None = None,
+        filters: Mapping[str, object] | None = None,
+        extra_criteria: Sequence[ColumnElement[bool]] | None = None,
+    ) -> tuple[Decimal, Decimal]:
+        criteria = self._repo._criteria(
+            filters=filters,
+            common_filter=common_filter,
+            extra_criteria=extra_criteria,
+        )
+        row = (
+            await self.session.execute(
+                select(
+                    func.coalesce(func.sum(MaterialCategory.rolls_on_hand), 0),
+                    func.coalesce(func.sum(MaterialCategory.total_kg), 0),
+                ).where(*criteria),
+            )
+        ).one()
+        return Decimal(str(row[0])), Decimal(str(row[1]))
+
     async def create(self, values: Mapping[str, object]) -> MaterialCategory:
         return await self._repo.create(values)
 
-    async def update(self, category_id: UUID, values: Mapping[str, object]) -> MaterialCategory | None:
+    async def update(
+        self, category_id: UUID, values: Mapping[str, object]
+    ) -> MaterialCategory | None:
         return await self._repo.update(category_id, values)
 
     async def soft_delete(self, category_id: UUID) -> MaterialCategory | None:
@@ -115,7 +140,9 @@ class CategoryRepository:
         ]
         if category_kind is not None:
             criteria.append(MaterialCategory.category_kind == category_kind.value)
-        total = await self.session.scalar(select(func.count()).select_from(MaterialCategory).where(*criteria))
+        total = await self.session.scalar(
+            select(func.count()).select_from(MaterialCategory).where(*criteria)
+        )
         return int(total or 0)
 
     async def micron_ids_for_product(self, product_id: UUID) -> list[UUID]:
@@ -272,17 +299,23 @@ class MovementRepository:
         through_date: date,
     ) -> tuple[Decimal, Decimal]:
         rows = await self.session.execute(
-            select(MaterialMovement.direction, MaterialMovement.rolls, MaterialMovement.kilograms)
-            .where(
+            select(
+                MaterialMovement.direction, MaterialMovement.rolls, MaterialMovement.kilograms
+            ).where(
                 MaterialMovement.category_id == category_id,
                 MaterialMovement.deleted_at.is_(None),
-                MaterialMovement.movement_date <= through_date,
+                or_(
+                    MaterialMovement.direction == MaterialMovementDirection.OPENING.value,
+                    MaterialMovement.movement_date <= through_date,
+                ),
             )
         )
         rolls = Decimal("0")
         kg = Decimal("0")
         for direction, row_rolls, row_kg in rows.all():
-            sign = Decimal("-1") if direction == MaterialMovementDirection.OUT.value else Decimal("1")
+            sign = (
+                Decimal("-1") if direction == MaterialMovementDirection.OUT.value else Decimal("1")
+            )
             rolls += sign * Decimal(row_rolls)
             kg += sign * Decimal(row_kg)
         return rolls, kg
@@ -314,7 +347,9 @@ class MovementRepository:
         )
         result: dict[UUID, tuple[Decimal, Decimal, Decimal, Decimal]] = {}
         for category_id, direction, sum_rolls, sum_kg in rows.all():
-            current = result.get(category_id, (Decimal("0"), Decimal("0"), Decimal("0"), Decimal("0")))
+            current = result.get(
+                category_id, (Decimal("0"), Decimal("0"), Decimal("0"), Decimal("0"))
+            )
             in_r, in_k, out_r, out_k = current
             if direction == MaterialMovementDirection.IN.value:
                 in_r += Decimal(sum_rolls)

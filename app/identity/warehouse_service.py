@@ -10,7 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.common.schemas.filters import BaseFilter
 from app.common.schemas.pagination import PageParams
 from app.common.services.audit import AuditWriter, audit_field_changes
-from app.core.enums import AddressType, AuditAction, IDENTITY_MODULE
+from app.core.enums import IDENTITY_MODULE, AddressType, AuditAction
 from app.core.exceptions import DuplicateResourceError, ResourceNotFoundError, ValidationError
 from app.db.session import transaction
 from app.identity.models import Warehouse
@@ -51,6 +51,22 @@ class WarehouseService:
             filters=filters or None,
         )
         return [item for item in await self._to_responses(list(rows))], total
+
+    async def list_for_export(
+        self,
+        *,
+        common_filter: BaseFilter | None = None,
+        is_active: bool | None = None,
+    ) -> list[WarehouseResponse]:
+        from app.common.export.fetch import assert_export_total, export_page
+
+        rows, total = await self.list(
+            page=export_page(),
+            common_filter=common_filter,
+            is_active=is_active,
+        )
+        assert_export_total(total)
+        return rows
 
     async def get(self, warehouse_id: UUID) -> WarehouseResponse:
         row = await self._require(warehouse_id)

@@ -11,7 +11,7 @@ from app.common.models.audit_log import AuditLog
 from app.common.repositories.search import column_ilike, ilike_pattern
 from app.common.schemas.filters import BaseFilter
 from app.common.schemas.pagination import PageParams
-from app.core.enums import AuditAction, AuditStatus, IDENTITY_MODULE
+from app.core.enums import IDENTITY_MODULE, AuditAction, AuditStatus
 from app.identity.models import User
 
 
@@ -198,10 +198,7 @@ class AuditLogRepository:
     ) -> list[str]:
         criteria = self._criteria(common_filter=common_filter)
         statement = (
-            select(AuditLog.module)
-            .where(*criteria)
-            .distinct()
-            .order_by(AuditLog.module.asc())
+            select(AuditLog.module).where(*criteria).distinct().order_by(AuditLog.module.asc())
         )
         result = await self.session.execute(statement)
         return [str(row[0]) for row in result.all() if row[0]]

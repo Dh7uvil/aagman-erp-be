@@ -2,10 +2,9 @@
 
 from __future__ import annotations
 
-import uuid
 from collections.abc import Mapping
 from datetime import date
-from decimal import Decimal, ROUND_HALF_UP
+from decimal import ROUND_HALF_UP, Decimal
 from uuid import UUID
 
 from sqlalchemy import select
@@ -16,18 +15,10 @@ from app.common.schemas.filters import BaseFilter
 from app.common.schemas.pagination import PageParams
 from app.common.services.audit import AuditWriter, audit_field_changes, jsonable_value
 from app.common.services.entity_history import EntityHistoryEntry, EntityHistoryService
-from app.common.utils.files import (
-    MIME_JPEG,
-    MIME_PDF,
-    MIME_PNG,
-    MIME_WEBP,
-    validate_upload,
-)
-from app.core.enums import AuditAction, INVENTORY_MODULE, MaterialMovementDirection
+from app.core.enums import INVENTORY_MODULE, AuditAction, MaterialMovementDirection
 from app.core.exceptions import (
     DuplicateResourceError,
     InsufficientStockError,
-    PermissionDeniedError,
     ResourceNotFoundError,
     ValidationError,
 )
@@ -35,8 +26,11 @@ from app.core.permissions import has_permission
 from app.db.session import transaction
 from app.identity.models import Company, User
 from app.identity.schemas import AuditLogUserSummary
-from app.inventory.catalog import ADHESIVE_VIEW_PRICE
-from app.inventory.adhesives.models import AdhesiveBrand, AdhesiveCode, AdhesiveLine, AdhesiveMovement, AdhesiveSheet
+from app.inventory.adhesives.models import (
+    AdhesiveCode,
+    AdhesiveLine,
+    AdhesiveSheet,
+)
 from app.inventory.adhesives.repository import (
     AdhesiveBrandRepository,
     AdhesiveCodeRepository,
@@ -54,19 +48,21 @@ from app.inventory.adhesives.schemas import (
     AdhesiveCodeUsageLine,
     AdhesiveCodeUsageResponse,
     AdhesiveDayReportRow,
+    AdhesiveLineListItem,
     AdhesiveLineResponse,
     AdhesiveLineUpsert,
     AdhesiveSheetCreate,
-    AdhesiveLineListItem,
     AdhesiveSheetListItem,
     AdhesiveSheetResponse,
     AdhesiveSheetUpdate,
     AdhesiveStockOutCreate,
 )
+from app.inventory.catalog import ADHESIVE_VIEW_PRICE
 from app.inventory.models import InventoryUnit
 from app.inventory.pricing import compute_avg_price
 from app.inventory.repository import UnitRepository
 from app.inventory.schemas import DrumLineHistoryEntry, DrumLineHistorySummary
+
 
 class AdhesiveService:
     _DISPLAY_SCALE = Decimal("0.01")
@@ -108,7 +104,9 @@ class AdhesiveService:
         return unit.id
 
     @staticmethod
-    def _line_totals(drum_count: Decimal, drum_qty: Decimal, adhesive_rate: Decimal | None) -> tuple[Decimal, Decimal | None]:
+    def _line_totals(
+        drum_count: Decimal, drum_qty: Decimal, adhesive_rate: Decimal | None
+    ) -> tuple[Decimal, Decimal | None]:
         total_qty = drum_count * drum_qty
         total_rate = (total_qty * adhesive_rate) if adhesive_rate is not None else None
         return total_qty, total_rate
@@ -192,7 +190,9 @@ class AdhesiveService:
             for row in line_rows
         ]
 
-    async def _sheet_response(self, sheet: AdhesiveSheet, *, can_view_price: bool) -> AdhesiveSheetResponse:
+    async def _sheet_response(
+        self, sheet: AdhesiveSheet, *, can_view_price: bool
+    ) -> AdhesiveSheetResponse:
         company = await self._require_company(sheet.company_id)
         line_rows = await self.lines.list_for_sheet(sheet.id)
         lines = await self._line_responses(line_rows, can_view_price=can_view_price)
@@ -217,8 +217,26 @@ class AdhesiveService:
         filters: dict[str, object] = {}
         if is_active is not None:
             filters["is_active"] = is_active
-        rows, total = await self.codes.list(page=page, common_filter=common_filter, filters=filters or None)
+        rows, total = await self.codes.list(
+            page=page, common_filter=common_filter, filters=filters or None
+        )
         return [AdhesiveCodeResponse.model_validate(row) for row in rows], total
+
+    async def list_codes_for_export(
+        self,
+        *,
+        common_filter: BaseFilter | None,
+        is_active: bool | None,
+    ) -> list[AdhesiveCodeResponse]:
+        from app.common.export.fetch import assert_export_total, export_page
+
+        rows, total = await self.list_codes(
+            page=export_page(),
+            common_filter=common_filter,
+            is_active=is_active,
+        )
+        assert_export_total(total)
+        return rows
 
     async def get_code(self, adhesive_code_id: UUID) -> AdhesiveCodeResponse:
         row = await self.codes.get(adhesive_code_id)
@@ -355,7 +373,9 @@ class AdhesiveService:
         *,
         permissions: frozenset[str],
     ) -> DrumLineHistorySummary:
-        line, sheet, company, brand_name, code, unit_code = await self._line_history_context(line_id)
+        line, sheet, company, brand_name, code, unit_code = await self._line_history_context(
+            line_id
+        )
         can_view_price = self._can_view_price(permissions)
         last_in = await self.movements.last_stock_in(line_id)
         last_price = None
@@ -397,7 +417,9 @@ class AdhesiveService:
             try:
                 row = await self.codes.create(payload.model_dump())
             except IntegrityError as exc:
-                raise DuplicateResourceError("An adhesive code with this code already exists") from exc
+                raise DuplicateResourceError(
+                    "An adhesive code with this code already exists"
+                ) from exc
             await self.audit.write(
                 user_id=actor_user_id,
                 action=AuditAction.CREATE,
@@ -424,7 +446,9 @@ class AdhesiveService:
             try:
                 updated = await self.codes.update(adhesive_code_id, values)
             except IntegrityError as exc:
-                raise DuplicateResourceError("An adhesive code with this code already exists") from exc
+                raise DuplicateResourceError(
+                    "An adhesive code with this code already exists"
+                ) from exc
             if updated is None:
                 raise ResourceNotFoundError("Adhesive code not found")
             new = self._code_snapshot(updated)
@@ -465,7 +489,9 @@ class AdhesiveService:
             )
             return AdhesiveCodeResponse.model_validate(deleted)
 
-    async def code_usage(self, adhesive_code_id: UUID, *, permissions: frozenset[str]) -> AdhesiveCodeUsageResponse:
+    async def code_usage(
+        self, adhesive_code_id: UUID, *, permissions: frozenset[str]
+    ) -> AdhesiveCodeUsageResponse:
         code_row = await self.codes.get(adhesive_code_id)
         if code_row is None:
             raise ResourceNotFoundError("Adhesive code not found")
@@ -504,7 +530,9 @@ class AdhesiveService:
                     drum_qty=self._display_decimal(line.drum_qty) or Decimal("0"),
                     drum_unit_code=unit_code,
                     total_qty=self._display_decimal(qty) or Decimal("0"),
-                    adhesive_rate=self._display_decimal(line.adhesive_rate) if can_view_price else None,
+                    adhesive_rate=self._display_decimal(line.adhesive_rate)
+                    if can_view_price
+                    else None,
                     total_rate=self._display_decimal(line.total_rate) if can_view_price else None,
                     avg_price_per_unit=avg_price,
                     price_unit_code=unit_code if avg_price is not None else None,
@@ -515,6 +543,19 @@ class AdhesiveService:
             companies_with_stock=len(companies_with_stock),
             lines=usage_lines,
         )
+
+    async def code_usage_for_export(
+        self,
+        adhesive_code_id: UUID,
+        *,
+        permissions: frozenset[str],
+    ) -> list[AdhesiveCodeUsageLine]:
+        from app.common.export.fetch import assert_export_total
+
+        response = await self.code_usage(adhesive_code_id, permissions=permissions)
+        rows = response.lines
+        assert_export_total(len(rows))
+        return rows
 
     # Brands
 
@@ -528,8 +569,26 @@ class AdhesiveService:
         filters: dict[str, object] = {}
         if is_active is not None:
             filters["is_active"] = is_active
-        rows, total = await self.brands.list(page=page, common_filter=common_filter, filters=filters or None)
+        rows, total = await self.brands.list(
+            page=page, common_filter=common_filter, filters=filters or None
+        )
         return [AdhesiveBrandResponse.model_validate(row) for row in rows], total
+
+    async def list_brands_for_export(
+        self,
+        *,
+        common_filter: BaseFilter | None,
+        is_active: bool | None,
+    ) -> list[AdhesiveBrandResponse]:
+        from app.common.export.fetch import assert_export_total, export_page
+
+        rows, total = await self.list_brands(
+            page=export_page(),
+            common_filter=common_filter,
+            is_active=is_active,
+        )
+        assert_export_total(total)
+        return rows
 
     async def get_brand(self, brand_id: UUID) -> AdhesiveBrandResponse:
         row = await self.brands.get(brand_id)
@@ -542,16 +601,22 @@ class AdhesiveService:
             try:
                 row = await self.brands.create(payload.model_dump())
             except IntegrityError as exc:
-                raise DuplicateResourceError("An adhesive brand with this name already exists") from exc
+                raise DuplicateResourceError(
+                    "An adhesive brand with this name already exists"
+                ) from exc
             return AdhesiveBrandResponse.model_validate(row)
 
-    async def update_brand(self, brand_id: UUID, payload: AdhesiveBrandUpdate) -> AdhesiveBrandResponse:
+    async def update_brand(
+        self, brand_id: UUID, payload: AdhesiveBrandUpdate
+    ) -> AdhesiveBrandResponse:
         values = payload.model_dump(exclude_unset=True)
         async with transaction(self.session):
             try:
                 updated = await self.brands.update(brand_id, values)
             except IntegrityError as exc:
-                raise DuplicateResourceError("An adhesive brand with this name already exists") from exc
+                raise DuplicateResourceError(
+                    "An adhesive brand with this name already exists"
+                ) from exc
             if updated is None:
                 raise ResourceNotFoundError("Adhesive brand not found")
             return AdhesiveBrandResponse.model_validate(updated)
@@ -581,7 +646,11 @@ class AdhesiveService:
             company_id=company_id,
         )
         can_view_price = self._can_view_price(permissions)
-        avg_map = await self._avg_prices_by_line_ids([line.id for line in line_rows]) if can_view_price else {}
+        avg_map = (
+            await self._avg_prices_by_line_ids([line.id for line in line_rows])
+            if can_view_price
+            else {}
+        )
         sheet_cache: dict[UUID, AdhesiveSheet] = {}
         company_cache: dict[UUID, Company] = {}
         items: list[AdhesiveLineListItem] = []
@@ -611,6 +680,24 @@ class AdhesiveService:
             )
         return items, total
 
+    async def list_line_items_for_export(
+        self,
+        *,
+        common_filter: BaseFilter | None,
+        company_id: UUID | None,
+        permissions: frozenset[str],
+    ) -> list[AdhesiveLineListItem]:
+        from app.common.export.fetch import assert_export_total, export_page
+
+        rows, total = await self.list_line_items(
+            page=export_page(),
+            common_filter=common_filter,
+            company_id=company_id,
+            permissions=permissions,
+        )
+        assert_export_total(total)
+        return rows
+
     async def list_sheets(
         self,
         *,
@@ -621,7 +708,9 @@ class AdhesiveService:
         filters: dict[str, object] = {}
         if company_id is not None:
             filters["company_id"] = company_id
-        rows, total = await self.sheets.list(page=page, common_filter=common_filter, filters=filters or None)
+        rows, total = await self.sheets.list(
+            page=page, common_filter=common_filter, filters=filters or None
+        )
         items: list[AdhesiveSheetListItem] = []
         for sheet in rows:
             company = await self._require_company(sheet.company_id)
@@ -642,7 +731,9 @@ class AdhesiveService:
             )
         return items, total
 
-    async def get_sheet(self, sheet_id: UUID, *, permissions: frozenset[str]) -> AdhesiveSheetResponse:
+    async def get_sheet(
+        self, sheet_id: UUID, *, permissions: frozenset[str]
+    ) -> AdhesiveSheetResponse:
         sheet = await self.sheets.get(sheet_id)
         if sheet is None:
             raise ResourceNotFoundError("Adhesive sheet not found")
@@ -683,7 +774,11 @@ class AdhesiveService:
                 return await self._sheet_response(refreshed, can_view_price=can_view_price)
 
             sheet = await self.sheets.create(
-                {"company_id": payload.company_id, "created_by": actor_user_id, "updated_by": actor_user_id}
+                {
+                    "company_id": payload.company_id,
+                    "created_by": actor_user_id,
+                    "updated_by": actor_user_id,
+                }
             )
             if payload.lines:
                 await self._sync_lines(
@@ -843,7 +938,9 @@ class AdhesiveService:
             if item.adhesive_rate is not None and not can_view_price:
                 raise ValidationError("You do not have permission to set adhesive rate")
 
-            total_qty, total_rate = self._line_totals(item.drum_count, item.drum_qty, item.adhesive_rate)
+            total_qty, total_rate = self._line_totals(
+                item.drum_count, item.drum_qty, item.adhesive_rate
+            )
 
             if item.id is None:
                 matched = self._find_line_by_brand_code(
@@ -1010,7 +1107,9 @@ class AdhesiveService:
                         "available_quantity": str(current_qty),
                     },
                 )
-            _, total_rate = self._line_totals(new_drums, line.drum_qty or Decimal("0"), line.adhesive_rate)
+            _, total_rate = self._line_totals(
+                new_drums, line.drum_qty or Decimal("0"), line.adhesive_rate
+            )
             updated = await self.lines.update(
                 line.id,
                 {
@@ -1108,8 +1207,27 @@ class AdhesiveService:
                     out_qty=self._display_decimal(out_q) or Decimal("0"),
                     closing_drums=self._display_decimal(closing_drums) or Decimal("0"),
                     closing_qty=self._display_decimal(closing_qty) or Decimal("0"),
-                    adhesive_rate=self._display_decimal(line.adhesive_rate) if can_view_price else None,
+                    adhesive_rate=self._display_decimal(line.adhesive_rate)
+                    if can_view_price
+                    else None,
                 )
             )
         rows.sort(key=lambda row: (row.company_name, row.brand_name, row.code))
+        return rows
+
+    async def adhesives_day_report_for_export(
+        self,
+        *,
+        start_date: date,
+        end_date: date,
+        permissions: frozenset[str],
+    ) -> list[AdhesiveDayReportRow]:
+        from app.common.export.fetch import assert_export_total
+
+        rows = await self.day_report(
+            start_date=start_date,
+            end_date=end_date,
+            permissions=permissions,
+        )
+        assert_export_total(len(rows))
         return rows

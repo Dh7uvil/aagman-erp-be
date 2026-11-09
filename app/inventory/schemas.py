@@ -42,7 +42,9 @@ class UnitResponse(BaseModel):
 
 
 class UnitFilter(BaseFilter):
-    allowed_sort_fields: ClassVar[frozenset[str]] = frozenset({"created_at", "updated_at", "name", "code"})
+    allowed_sort_fields: ClassVar[frozenset[str]] = frozenset(
+        {"created_at", "updated_at", "name", "code"}
+    )
 
     is_active: bool | None = None
 
@@ -195,7 +197,9 @@ class MaterialResponse(BaseModel):
 
 
 class MaterialFilter(BaseFilter):
-    allowed_sort_fields: ClassVar[frozenset[str]] = frozenset({"created_at", "updated_at", "name", "size"})
+    allowed_sort_fields: ClassVar[frozenset[str]] = frozenset(
+        {"created_at", "updated_at", "name", "size"}
+    )
 
     parent_id: UUID | None = None
     product_id: UUID | None = None

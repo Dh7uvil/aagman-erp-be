@@ -7,7 +7,7 @@ from datetime import date
 from decimal import Decimal
 from uuid import UUID
 
-from sqlalchemy import Select, and_, func, or_, select
+from sqlalchemy import and_, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.common.repositories.base import BaseRepository
@@ -17,8 +17,14 @@ from app.common.schemas.pagination import PageParams
 from app.core.enums import MaterialMovementDirection
 from app.core.exceptions import ValidationError
 from app.identity.models import Company
-from app.inventory.solvents.models import SolventBrand, SolventName, SolventLine, SolventMovement, SolventSheet
 from app.inventory.pricing import PurchasePriceStats
+from app.inventory.solvents.models import (
+    SolventBrand,
+    SolventLine,
+    SolventMovement,
+    SolventName,
+    SolventSheet,
+)
 
 
 class SolventNameRepository:
@@ -47,7 +53,9 @@ class SolventNameRepository:
     async def create(self, values: Mapping[str, object]) -> SolventName:
         return await self._repo.create(values)
 
-    async def update(self, solvent_name_id: UUID, values: Mapping[str, object]) -> SolventName | None:
+    async def update(
+        self, solvent_name_id: UUID, values: Mapping[str, object]
+    ) -> SolventName | None:
         return await self._repo.update(solvent_name_id, values)
 
     async def soft_delete(self, solvent_name_id: UUID) -> SolventName | None:
@@ -172,7 +180,9 @@ class SolventLineRepository:
 
     async def list_for_code(self, solvent_name_id: UUID) -> list[SolventLine]:
         result = await self.session.execute(
-            select(SolventLine).where(SolventLine.solvent_name_id == solvent_name_id, SolventLine.deleted_at.is_(None))
+            select(SolventLine).where(
+                SolventLine.solvent_name_id == solvent_name_id, SolventLine.deleted_at.is_(None)
+            )
         )
         return list(result.scalars().all())
 
@@ -187,7 +197,9 @@ class SolventLineRepository:
 
     async def list_active_lines(self) -> list[SolventLine]:
         result = await self.session.execute(
-            select(SolventLine).where(SolventLine.deleted_at.is_(None)).order_by(SolventLine.created_at.asc())
+            select(SolventLine)
+            .where(SolventLine.deleted_at.is_(None))
+            .order_by(SolventLine.created_at.asc())
         )
         return list(result.scalars().all())
 
@@ -200,7 +212,9 @@ class SolventLineRepository:
     ) -> tuple[list[SolventLine], int]:
         allowed_sort = frozenset({"created_at", "updated_at"})
         sort_by = common_filter.sort_by if common_filter and common_filter.sort_by else "created_at"
-        sort_order = common_filter.sort_order if common_filter and common_filter.sort_order else "desc"
+        sort_order = (
+            common_filter.sort_order if common_filter and common_filter.sort_order else "desc"
+        )
         if sort_by not in allowed_sort:
             allowed = ", ".join(sorted(allowed_sort))
             raise ValidationError(f"sort_by must be one of: {allowed}")
@@ -209,7 +223,9 @@ class SolventLineRepository:
             SolventLine.deleted_at.is_(None),
             SolventSheet.deleted_at.is_(None),
         ]
-        stmt = select(SolventLine).join(SolventSheet, SolventLine.solvent_sheet_id == SolventSheet.id)
+        stmt = select(SolventLine).join(
+            SolventSheet, SolventLine.solvent_sheet_id == SolventSheet.id
+        )
         if company_id is not None:
             criteria.append(SolventSheet.company_id == company_id)
         if common_filter is not None:
@@ -306,7 +322,8 @@ class SolventMovementRepository:
                     0,
                 ),
                 func.coalesce(func.sum(SolventMovement.solvent_rate), 0),
-            ).where(
+            )
+            .where(
                 SolventMovement.solvent_line_id.in_(unique),
                 SolventMovement.deleted_at.is_(None),
                 SolventMovement.direction.in_(
@@ -316,7 +333,8 @@ class SolventMovementRepository:
                     )
                 ),
                 SolventMovement.solvent_rate.is_not(None),
-            ).group_by(SolventMovement.solvent_line_id)
+            )
+            .group_by(SolventMovement.solvent_line_id)
         )
         return {
             line_id: PurchasePriceStats(
@@ -385,16 +403,23 @@ class SolventMovementRepository:
 
     async def sum_through_date(self, line_id: UUID, through_date: date) -> tuple[Decimal, Decimal]:
         rows = await self.session.execute(
-            select(SolventMovement.direction, SolventMovement.drums, SolventMovement.quantity).where(
+            select(
+                SolventMovement.direction, SolventMovement.drums, SolventMovement.quantity
+            ).where(
                 SolventMovement.solvent_line_id == line_id,
                 SolventMovement.deleted_at.is_(None),
-                SolventMovement.movement_date <= through_date,
+                or_(
+                    SolventMovement.direction == MaterialMovementDirection.OPENING.value,
+                    SolventMovement.movement_date <= through_date,
+                ),
             )
         )
         drums = Decimal("0")
         qty = Decimal("0")
         for direction, row_drums, row_qty in rows.all():
-            sign = Decimal("-1") if direction == MaterialMovementDirection.OUT.value else Decimal("1")
+            sign = (
+                Decimal("-1") if direction == MaterialMovementDirection.OUT.value else Decimal("1")
+            )
             drums += sign * Decimal(row_drums)
             qty += sign * Decimal(row_qty)
         return drums, qty
