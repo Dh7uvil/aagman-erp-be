@@ -340,6 +340,48 @@ async def test_solvent_movement_day_report(client: AsyncClient) -> None:
     assert float(match[0]["closing_qty"]) == 10
 
 
+async def test_solvent_movement_day_report_counts_opening_as_in(client: AsyncClient) -> None:
+    email, password = await provision_admin()
+    headers = await login_headers(client, email, password)
+    kg_unit = await _unit_id_by_code(client, headers, "kg")
+    company_id = await _create_company(client, headers)
+    brand_id = await _create_brand(client, headers, f"Brand-{uuid4().hex[:4]}")
+    solvent_name_id = await _create_name(client, headers, f"Open-{uuid4().hex[:4]}")
+
+    create = await client.post(
+        "/api/v1/inventory/solvents",
+        headers=headers,
+        json={
+            "company_id": company_id,
+            "lines": [
+                {
+                    "brand_id": brand_id,
+                    "solvent_name_id": solvent_name_id,
+                    "drum_count": "2",
+                    "drum_qty": "10",
+                    "drum_unit_id": kg_unit,
+                }
+            ],
+        },
+    )
+    assert create.status_code == 201, create.text
+    line_id = create.json()["data"]["lines"][0]["id"]
+    today = date.today().isoformat()
+
+    report = await client.get(
+        "/api/v1/inventory/solvent-movements/report",
+        headers=headers,
+        params={"start_date": today, "end_date": today},
+    )
+    assert report.status_code == 200, report.text
+    match = [row for row in report.json()["data"] if row["solvent_line_id"] == line_id]
+    assert len(match) == 1
+    assert float(match[0]["in_drums"]) == 2
+    assert float(match[0]["in_qty"]) == 20
+    assert float(match[0]["closing_drums"]) == 2
+    assert float(match[0]["closing_qty"]) == 20
+
+
 async def test_solvent_code_usage_table_preference_matches_sheet_columns(client: AsyncClient) -> None:
     email, password = await provision_admin()
     headers = await login_headers(client, email, password)

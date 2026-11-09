@@ -360,6 +360,7 @@ class AdhesiveMovementRepository:
                 AdhesiveMovement.direction.in_(
                     (
                         MaterialMovementDirection.IN.value,
+                        MaterialMovementDirection.OPENING.value,
                         MaterialMovementDirection.OUT.value,
                     )
                 ),
@@ -370,7 +371,10 @@ class AdhesiveMovementRepository:
         for line_id, direction, sum_drums, sum_qty in rows.all():
             current = result.get(line_id, (Decimal("0"), Decimal("0"), Decimal("0"), Decimal("0")))
             in_d, in_q, out_d, out_q = current
-            if direction == MaterialMovementDirection.IN.value:
+            if direction in (
+                MaterialMovementDirection.IN.value,
+                MaterialMovementDirection.OPENING.value,
+            ):
                 in_d += Decimal(sum_drums)
                 in_q += Decimal(sum_qty)
             else:

@@ -169,6 +169,11 @@ TABLE_CATALOG: dict[str, TableCatalogEntry] = {
                     default_visible=False,
                     required_permission="inventory.cylinder.view_price",
                 ),
+                TableColumnSpec(
+                    "total_cylinder_cost",
+                    default_visible=False,
+                    required_permission="inventory.cylinder.view_price",
+                ),
                 TableColumnSpec("created_at", default_visible=False),
                 TableColumnSpec("updated_at", default_visible=False),
             ),
