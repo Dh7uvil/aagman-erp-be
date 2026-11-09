@@ -25,3 +25,6 @@ class UserTablePreference(TimestampedModel):
     table_key: Mapped[str] = mapped_column(String(100), nullable=False)
     visible_columns: Mapped[list[str]] = mapped_column(JSONB, nullable=False)
     column_order: Mapped[list[str]] = mapped_column(JSONB, nullable=False)
+    export_visible_columns: Mapped[list[str] | None] = mapped_column(JSONB, nullable=True)
+    export_column_order: Mapped[list[str] | None] = mapped_column(JSONB, nullable=True)
+    export_format: Mapped[str | None] = mapped_column(String(8), nullable=True)

@@ -7,7 +7,7 @@ from datetime import date
 from decimal import Decimal
 from uuid import UUID
 
-from sqlalchemy import Select, and_, func, or_, select
+from sqlalchemy import and_, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.common.repositories.base import BaseRepository
@@ -17,7 +17,13 @@ from app.common.schemas.pagination import PageParams
 from app.core.enums import MaterialMovementDirection
 from app.core.exceptions import ValidationError
 from app.identity.models import Company
-from app.inventory.adhesives.models import AdhesiveBrand, AdhesiveCode, AdhesiveLine, AdhesiveMovement, AdhesiveSheet
+from app.inventory.adhesives.models import (
+    AdhesiveBrand,
+    AdhesiveCode,
+    AdhesiveLine,
+    AdhesiveMovement,
+    AdhesiveSheet,
+)
 from app.inventory.pricing import PurchasePriceStats
 
 
@@ -47,7 +53,9 @@ class AdhesiveCodeRepository:
     async def create(self, values: Mapping[str, object]) -> AdhesiveCode:
         return await self._repo.create(values)
 
-    async def update(self, adhesive_code_id: UUID, values: Mapping[str, object]) -> AdhesiveCode | None:
+    async def update(
+        self, adhesive_code_id: UUID, values: Mapping[str, object]
+    ) -> AdhesiveCode | None:
         return await self._repo.update(adhesive_code_id, values)
 
     async def soft_delete(self, adhesive_code_id: UUID) -> AdhesiveCode | None:
@@ -57,7 +65,9 @@ class AdhesiveCodeRepository:
         result = await self.session.scalar(
             select(func.count())
             .select_from(AdhesiveLine)
-            .where(AdhesiveLine.adhesive_code_id == adhesive_code_id, AdhesiveLine.deleted_at.is_(None))
+            .where(
+                AdhesiveLine.adhesive_code_id == adhesive_code_id, AdhesiveLine.deleted_at.is_(None)
+            )
         )
         return int(result or 0)
 
@@ -172,7 +182,9 @@ class AdhesiveLineRepository:
 
     async def list_for_code(self, adhesive_code_id: UUID) -> list[AdhesiveLine]:
         result = await self.session.execute(
-            select(AdhesiveLine).where(AdhesiveLine.adhesive_code_id == adhesive_code_id, AdhesiveLine.deleted_at.is_(None))
+            select(AdhesiveLine).where(
+                AdhesiveLine.adhesive_code_id == adhesive_code_id, AdhesiveLine.deleted_at.is_(None)
+            )
         )
         return list(result.scalars().all())
 
@@ -187,7 +199,9 @@ class AdhesiveLineRepository:
 
     async def list_active_lines(self) -> list[AdhesiveLine]:
         result = await self.session.execute(
-            select(AdhesiveLine).where(AdhesiveLine.deleted_at.is_(None)).order_by(AdhesiveLine.created_at.asc())
+            select(AdhesiveLine)
+            .where(AdhesiveLine.deleted_at.is_(None))
+            .order_by(AdhesiveLine.created_at.asc())
         )
         return list(result.scalars().all())
 
@@ -200,7 +214,9 @@ class AdhesiveLineRepository:
     ) -> tuple[list[AdhesiveLine], int]:
         allowed_sort = frozenset({"created_at", "updated_at"})
         sort_by = common_filter.sort_by if common_filter and common_filter.sort_by else "created_at"
-        sort_order = common_filter.sort_order if common_filter and common_filter.sort_order else "desc"
+        sort_order = (
+            common_filter.sort_order if common_filter and common_filter.sort_order else "desc"
+        )
         if sort_by not in allowed_sort:
             allowed = ", ".join(sorted(allowed_sort))
             raise ValidationError(f"sort_by must be one of: {allowed}")
@@ -209,7 +225,9 @@ class AdhesiveLineRepository:
             AdhesiveLine.deleted_at.is_(None),
             AdhesiveSheet.deleted_at.is_(None),
         ]
-        stmt = select(AdhesiveLine).join(AdhesiveSheet, AdhesiveLine.adhesive_sheet_id == AdhesiveSheet.id)
+        stmt = select(AdhesiveLine).join(
+            AdhesiveSheet, AdhesiveLine.adhesive_sheet_id == AdhesiveSheet.id
+        )
         if company_id is not None:
             criteria.append(AdhesiveSheet.company_id == company_id)
         if common_filter is not None:
@@ -306,7 +324,8 @@ class AdhesiveMovementRepository:
                     0,
                 ),
                 func.coalesce(func.sum(AdhesiveMovement.adhesive_rate), 0),
-            ).where(
+            )
+            .where(
                 AdhesiveMovement.adhesive_line_id.in_(unique),
                 AdhesiveMovement.deleted_at.is_(None),
                 AdhesiveMovement.direction.in_(
@@ -316,7 +335,8 @@ class AdhesiveMovementRepository:
                     )
                 ),
                 AdhesiveMovement.adhesive_rate.is_not(None),
-            ).group_by(AdhesiveMovement.adhesive_line_id)
+            )
+            .group_by(AdhesiveMovement.adhesive_line_id)
         )
         return {
             line_id: PurchasePriceStats(
@@ -385,16 +405,23 @@ class AdhesiveMovementRepository:
 
     async def sum_through_date(self, line_id: UUID, through_date: date) -> tuple[Decimal, Decimal]:
         rows = await self.session.execute(
-            select(AdhesiveMovement.direction, AdhesiveMovement.drums, AdhesiveMovement.quantity).where(
+            select(
+                AdhesiveMovement.direction, AdhesiveMovement.drums, AdhesiveMovement.quantity
+            ).where(
                 AdhesiveMovement.adhesive_line_id == line_id,
                 AdhesiveMovement.deleted_at.is_(None),
-                AdhesiveMovement.movement_date <= through_date,
+                or_(
+                    AdhesiveMovement.direction == MaterialMovementDirection.OPENING.value,
+                    AdhesiveMovement.movement_date <= through_date,
+                ),
             )
         )
         drums = Decimal("0")
         qty = Decimal("0")
         for direction, row_drums, row_qty in rows.all():
-            sign = Decimal("-1") if direction == MaterialMovementDirection.OUT.value else Decimal("1")
+            sign = (
+                Decimal("-1") if direction == MaterialMovementDirection.OUT.value else Decimal("1")
+            )
             drums += sign * Decimal(row_drums)
             qty += sign * Decimal(row_qty)
         return drums, qty

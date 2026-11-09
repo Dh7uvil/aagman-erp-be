@@ -64,12 +64,15 @@ def paginated_response[ItemT](
     params: PageParams,
     total: int,
     message: str | None = None,
+    column_totals: dict[str, str] | None = None,
 ) -> ApiResponse[list[ItemT]]:
     """Wrap a collection in the standard paginated response envelope."""
 
-    meta = PageMeta.from_params(params, total)
+    meta = PageMeta.from_params(params, total).model_dump()
+    if column_totals:
+        meta["column_totals"] = column_totals
     return ApiResponse(
         data=items,
         message=message,
-        meta=meta.model_dump(),
+        meta=meta,
     )

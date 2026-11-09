@@ -5,15 +5,38 @@ from typing import Annotated
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, Query, status
+from fastapi.responses import Response
 
 from app.common.dependencies.auth import CurrentUser, CurrentUserDependency
+from app.common.dependencies.export_scope import ExportScopeQuery, is_full_module_export
 from app.common.dependencies.pagination import PaginationDependency
 from app.common.dependencies.permissions import ReferenceListAccess, require_permission
+from app.common.export.report_range import resolve_export_report_range
+from app.common.export.service import compute_list_column_totals, export_catalog_table
 from app.common.schemas.pagination import paginated_response
 from app.common.schemas.response import ApiResponse
 from app.common.services.entity_history import EntityHistoryEntry
-from app.inventory.report_range import resolve_movement_report_range
-from app.inventory.schemas import DrumLineHistoryEntry, DrumLineHistorySummary
+from app.common.table_preferences.dependencies import TablePreferenceServiceDependency
+from app.inventory.adhesives.dependencies import AdhesiveServiceDependency
+from app.inventory.adhesives.schemas import (
+    AdhesiveBrandCreate,
+    AdhesiveBrandFilter,
+    AdhesiveBrandResponse,
+    AdhesiveBrandUpdate,
+    AdhesiveCodeCreate,
+    AdhesiveCodeFilter,
+    AdhesiveCodeResponse,
+    AdhesiveCodeUpdate,
+    AdhesiveCodeUsageResponse,
+    AdhesiveDayReportRow,
+    AdhesiveLineListItem,
+    AdhesiveLineResponse,
+    AdhesiveSheetCreate,
+    AdhesiveSheetFilter,
+    AdhesiveSheetResponse,
+    AdhesiveSheetUpdate,
+    AdhesiveStockOutCreate,
+)
 from app.inventory.catalog import (
     ADHESIVE_CODE_CREATE,
     ADHESIVE_CODE_DELETE,
@@ -27,26 +50,8 @@ from app.inventory.catalog import (
     ADHESIVE_UPDATE,
     ADHESIVES_REPORT_READ,
 )
-from app.inventory.adhesives.dependencies import AdhesiveServiceDependency
-from app.inventory.adhesives.schemas import (
-    AdhesiveBrandCreate,
-    AdhesiveBrandFilter,
-    AdhesiveBrandResponse,
-    AdhesiveBrandUpdate,
-    AdhesiveCodeCreate,
-    AdhesiveCodeFilter,
-    AdhesiveCodeResponse,
-    AdhesiveCodeUpdate,
-    AdhesiveCodeUsageResponse,
-    AdhesiveDayReportRow,
-    AdhesiveSheetCreate,
-    AdhesiveSheetFilter,
-    AdhesiveLineListItem,
-    AdhesiveSheetResponse,
-    AdhesiveSheetUpdate,
-    AdhesiveStockOutCreate,
-    AdhesiveLineResponse,
-)
+from app.inventory.report_range import resolve_movement_report_range
+from app.inventory.schemas import DrumLineHistoryEntry, DrumLineHistorySummary
 
 adhesive_codes_router = APIRouter(prefix="/adhesive-codes", tags=["Adhesive Codes"])
 adhesive_brands_router = APIRouter(prefix="/adhesive-brands", tags=["Adhesive Brands"])
@@ -58,16 +63,56 @@ adhesive_lines_router = APIRouter(prefix="/adhesive-lines", tags=["Adhesive Line
 @adhesive_codes_router.get("", response_model=ApiResponse[list[AdhesiveCodeResponse]])
 async def list_adhesive_codes(
     page: PaginationDependency,
+    current_user: ReferenceListAccess,
     service: AdhesiveServiceDependency,
+    preference_service: TablePreferenceServiceDependency,
     filters: Annotated[AdhesiveCodeFilter, Depends()],
-    _: ReferenceListAccess,
+    include_column_totals: Annotated[bool, Query()] = False,
 ) -> ApiResponse[list[AdhesiveCodeResponse]]:
     rows, total = await service.list_codes(
         page=page,
         common_filter=filters,
         is_active=filters.is_active,
     )
-    return paginated_response(rows, params=page, total=total)
+    column_totals = None
+    if include_column_totals:
+        export_rows = await service.list_codes_for_export(
+            common_filter=filters,
+            is_active=filters.is_active,
+        )
+        column_totals = await compute_list_column_totals(
+            preference_service,
+            user_id=current_user.user_id,
+            table_key="inventory.adhesive_codes",
+            permissions=current_user.permissions,
+            rows=export_rows,
+        )
+    return paginated_response(rows, params=page, total=total, column_totals=column_totals)
+
+
+@adhesive_codes_router.get("/export", response_class=Response)
+async def export_adhesive_codes(
+    current_user: ReferenceListAccess,
+    service: AdhesiveServiceDependency,
+    preference_service: TablePreferenceServiceDependency,
+    filters: Annotated[AdhesiveCodeFilter, Depends()],
+    export_scope: ExportScopeQuery,
+    format: Annotated[str, Query(pattern="^(csv|xlsx)$")] = "csv",
+) -> Response:
+    scope_filters = AdhesiveCodeFilter() if is_full_module_export(export_scope) else filters
+    rows = await service.list_codes_for_export(
+        common_filter=scope_filters,
+        is_active=scope_filters.is_active,
+    )
+    return await export_catalog_table(
+        preference_service,
+        user_id=current_user.user_id,
+        table_key="inventory.adhesive_codes",
+        permissions=current_user.permissions,
+        filename_stem="adhesive-codes",
+        format=format,
+        rows=rows,
+    )
 
 
 @adhesive_codes_router.post(
@@ -87,6 +132,31 @@ async def create_adhesive_code(
     )
 
 
+@adhesive_codes_router.get("/{adhesive_code_id}/usage/export", response_class=Response)
+async def export_adhesive_code_usage(
+    adhesive_code_id: UUID,
+    current_user: CurrentUserDependency,
+    service: AdhesiveServiceDependency,
+    preference_service: TablePreferenceServiceDependency,
+    _: Annotated[CurrentUser, Depends(require_permission(ADHESIVE_CODE_READ))],
+    export_scope: ExportScopeQuery,
+    format: Annotated[str, Query(pattern="^(csv|xlsx)$")] = "csv",
+) -> Response:
+    rows = await service.code_usage_for_export(
+        adhesive_code_id,
+        permissions=current_user.permissions,
+    )
+    return await export_catalog_table(
+        preference_service,
+        user_id=current_user.user_id,
+        table_key="inventory.adhesive_code_usage",
+        permissions=current_user.permissions,
+        filename_stem="adhesive-code-usage",
+        format=format,
+        rows=rows,
+    )
+
+
 @adhesive_codes_router.get("/{adhesive_code_id}", response_model=ApiResponse[AdhesiveCodeResponse])
 async def get_adhesive_code(
     adhesive_code_id: UUID,
@@ -96,7 +166,9 @@ async def get_adhesive_code(
     return ApiResponse(data=await service.get_code(adhesive_code_id))
 
 
-@adhesive_codes_router.get("/{adhesive_code_id}/usage", response_model=ApiResponse[AdhesiveCodeUsageResponse])
+@adhesive_codes_router.get(
+    "/{adhesive_code_id}/usage", response_model=ApiResponse[AdhesiveCodeUsageResponse]
+)
 async def get_adhesive_code_usage(
     adhesive_code_id: UUID,
     service: AdhesiveServiceDependency,
@@ -108,7 +180,9 @@ async def get_adhesive_code_usage(
     )
 
 
-@adhesive_codes_router.patch("/{adhesive_code_id}", response_model=ApiResponse[AdhesiveCodeResponse])
+@adhesive_codes_router.patch(
+    "/{adhesive_code_id}", response_model=ApiResponse[AdhesiveCodeResponse]
+)
 async def update_adhesive_code(
     adhesive_code_id: UUID,
     payload: AdhesiveCodeUpdate,
@@ -117,12 +191,16 @@ async def update_adhesive_code(
     _: Annotated[CurrentUser, Depends(require_permission(ADHESIVE_CODE_UPDATE))],
 ) -> ApiResponse[AdhesiveCodeResponse]:
     return ApiResponse(
-        data=await service.update_code(adhesive_code_id, payload, actor_user_id=current_user.user_id),
+        data=await service.update_code(
+            adhesive_code_id, payload, actor_user_id=current_user.user_id
+        ),
         message="Adhesive code updated successfully",
     )
 
 
-@adhesive_codes_router.get("/{adhesive_code_id}/history", response_model=ApiResponse[list[EntityHistoryEntry]])
+@adhesive_codes_router.get(
+    "/{adhesive_code_id}/history", response_model=ApiResponse[list[EntityHistoryEntry]]
+)
 async def adhesive_code_history(
     adhesive_code_id: UUID,
     page: PaginationDependency,
@@ -133,7 +211,9 @@ async def adhesive_code_history(
     return paginated_response(rows, params=page, total=total)
 
 
-@adhesive_codes_router.delete("/{adhesive_code_id}", response_model=ApiResponse[AdhesiveCodeResponse])
+@adhesive_codes_router.delete(
+    "/{adhesive_code_id}", response_model=ApiResponse[AdhesiveCodeResponse]
+)
 async def delete_adhesive_code(
     adhesive_code_id: UUID,
     service: AdhesiveServiceDependency,
@@ -149,16 +229,56 @@ async def delete_adhesive_code(
 @adhesive_brands_router.get("", response_model=ApiResponse[list[AdhesiveBrandResponse]])
 async def list_adhesive_brands(
     page: PaginationDependency,
+    current_user: ReferenceListAccess,
     service: AdhesiveServiceDependency,
+    preference_service: TablePreferenceServiceDependency,
     filters: Annotated[AdhesiveBrandFilter, Depends()],
-    _: ReferenceListAccess,
+    include_column_totals: Annotated[bool, Query()] = False,
 ) -> ApiResponse[list[AdhesiveBrandResponse]]:
     rows, total = await service.list_brands(
         page=page,
         common_filter=filters,
         is_active=filters.is_active,
     )
-    return paginated_response(rows, params=page, total=total)
+    column_totals = None
+    if include_column_totals:
+        export_rows = await service.list_brands_for_export(
+            common_filter=filters,
+            is_active=filters.is_active,
+        )
+        column_totals = await compute_list_column_totals(
+            preference_service,
+            user_id=current_user.user_id,
+            table_key="inventory.adhesive_brands",
+            permissions=current_user.permissions,
+            rows=export_rows,
+        )
+    return paginated_response(rows, params=page, total=total, column_totals=column_totals)
+
+
+@adhesive_brands_router.get("/export", response_class=Response)
+async def export_adhesive_brands(
+    current_user: ReferenceListAccess,
+    service: AdhesiveServiceDependency,
+    preference_service: TablePreferenceServiceDependency,
+    filters: Annotated[AdhesiveBrandFilter, Depends()],
+    export_scope: ExportScopeQuery,
+    format: Annotated[str, Query(pattern="^(csv|xlsx)$")] = "csv",
+) -> Response:
+    scope_filters = AdhesiveBrandFilter() if is_full_module_export(export_scope) else filters
+    rows = await service.list_brands_for_export(
+        common_filter=scope_filters,
+        is_active=scope_filters.is_active,
+    )
+    return await export_catalog_table(
+        preference_service,
+        user_id=current_user.user_id,
+        table_key="inventory.adhesive_brands",
+        permissions=current_user.permissions,
+        filename_stem="adhesive-brands",
+        format=format,
+        rows=rows,
+    )
 
 
 @adhesive_brands_router.post(
@@ -171,7 +291,9 @@ async def create_adhesive_brand(
     service: AdhesiveServiceDependency,
     _: Annotated[CurrentUser, Depends(require_permission(ADHESIVE_CREATE))],
 ) -> ApiResponse[AdhesiveBrandResponse]:
-    return ApiResponse(data=await service.create_brand(payload), message="Adhesive brand created successfully")
+    return ApiResponse(
+        data=await service.create_brand(payload), message="Adhesive brand created successfully"
+    )
 
 
 @adhesive_brands_router.get("/{brand_id}", response_model=ApiResponse[AdhesiveBrandResponse])
@@ -190,7 +312,10 @@ async def update_adhesive_brand(
     service: AdhesiveServiceDependency,
     _: Annotated[CurrentUser, Depends(require_permission(ADHESIVE_UPDATE))],
 ) -> ApiResponse[AdhesiveBrandResponse]:
-    return ApiResponse(data=await service.update_brand(brand_id, payload), message="Adhesive brand updated successfully")
+    return ApiResponse(
+        data=await service.update_brand(brand_id, payload),
+        message="Adhesive brand updated successfully",
+    )
 
 
 @adhesive_brands_router.delete("/{brand_id}", response_model=ApiResponse[AdhesiveBrandResponse])
@@ -199,16 +324,20 @@ async def delete_adhesive_brand(
     service: AdhesiveServiceDependency,
     _: Annotated[CurrentUser, Depends(require_permission(ADHESIVE_DELETE))],
 ) -> ApiResponse[AdhesiveBrandResponse]:
-    return ApiResponse(data=await service.delete_brand(brand_id), message="Adhesive brand deleted successfully")
+    return ApiResponse(
+        data=await service.delete_brand(brand_id), message="Adhesive brand deleted successfully"
+    )
 
 
 @adhesives_router.get("", response_model=ApiResponse[list[AdhesiveLineListItem]])
 async def list_adhesives(
     page: PaginationDependency,
     service: AdhesiveServiceDependency,
+    preference_service: TablePreferenceServiceDependency,
     filters: Annotated[AdhesiveSheetFilter, Depends()],
     current_user: CurrentUserDependency,
     _: Annotated[CurrentUser, Depends(require_permission(ADHESIVE_READ))],
+    include_column_totals: Annotated[bool, Query()] = False,
 ) -> ApiResponse[list[AdhesiveLineListItem]]:
     rows, total = await service.list_line_items(
         page=page,
@@ -216,7 +345,48 @@ async def list_adhesives(
         company_id=filters.company_id,
         permissions=current_user.permissions,
     )
-    return paginated_response(rows, params=page, total=total)
+    column_totals = None
+    if include_column_totals:
+        export_rows = await service.list_line_items_for_export(
+            common_filter=filters,
+            company_id=filters.company_id,
+            permissions=current_user.permissions,
+        )
+        column_totals = await compute_list_column_totals(
+            preference_service,
+            user_id=current_user.user_id,
+            table_key="inventory.adhesives",
+            permissions=current_user.permissions,
+            rows=export_rows,
+        )
+    return paginated_response(rows, params=page, total=total, column_totals=column_totals)
+
+
+@adhesives_router.get("/export", response_class=Response)
+async def export_adhesives(
+    current_user: CurrentUserDependency,
+    service: AdhesiveServiceDependency,
+    preference_service: TablePreferenceServiceDependency,
+    filters: Annotated[AdhesiveSheetFilter, Depends()],
+    _: Annotated[CurrentUser, Depends(require_permission(ADHESIVE_READ))],
+    export_scope: ExportScopeQuery,
+    format: Annotated[str, Query(pattern="^(csv|xlsx)$")] = "csv",
+) -> Response:
+    scope_filters = AdhesiveSheetFilter() if is_full_module_export(export_scope) else filters
+    rows = await service.list_line_items_for_export(
+        common_filter=scope_filters,
+        company_id=scope_filters.company_id,
+        permissions=current_user.permissions,
+    )
+    return await export_catalog_table(
+        preference_service,
+        user_id=current_user.user_id,
+        table_key="inventory.adhesives",
+        permissions=current_user.permissions,
+        filename_stem="adhesives",
+        format=format,
+        rows=rows,
+    )
 
 
 @adhesives_router.post(
@@ -289,7 +459,6 @@ async def adhesive_sheet_history(
     return paginated_response(rows, params=page, total=total)
 
 
-
 @adhesives_router.post("/{sheet_id}/stock-out", response_model=ApiResponse[AdhesiveLineResponse])
 async def adhesive_stock_out(
     sheet_id: UUID,
@@ -306,8 +475,9 @@ async def adhesive_stock_out(
     return ApiResponse(data=row, message="Stock out recorded successfully")
 
 
-
-@adhesive_lines_router.get("/{line_id}/history", response_model=ApiResponse[list[DrumLineHistoryEntry]])
+@adhesive_lines_router.get(
+    "/{line_id}/history", response_model=ApiResponse[list[DrumLineHistoryEntry]]
+)
 async def adhesive_line_history(
     line_id: UUID,
     page: PaginationDependency,
@@ -342,20 +512,64 @@ async def adhesive_line_history_summary(
 async def adhesive_movement_day_report(
     service: AdhesiveServiceDependency,
     current_user: CurrentUserDependency,
+    preference_service: TablePreferenceServiceDependency,
     _: Annotated[CurrentUser, Depends(require_permission(ADHESIVES_REPORT_READ))],
     report_date: Annotated[date | None, Query(alias="date")] = None,
     start_date: Annotated[date | None, Query(alias="start_date")] = None,
     end_date: Annotated[date | None, Query(alias="end_date")] = None,
+    include_column_totals: Annotated[bool, Query()] = False,
 ) -> ApiResponse[list[AdhesiveDayReportRow]]:
     start, end = resolve_movement_report_range(
         report_date=report_date,
         start_date=start_date,
         end_date=end_date,
     )
-    return ApiResponse(
-        data=await service.day_report(
-            start_date=start,
-            end_date=end,
+    rows = await service.day_report(
+        start_date=start,
+        end_date=end,
+        permissions=current_user.permissions,
+    )
+    meta: dict[str, object] = {}
+    if include_column_totals:
+        meta["column_totals"] = await compute_list_column_totals(
+            preference_service,
+            user_id=current_user.user_id,
+            table_key="inventory.adhesives_report",
             permissions=current_user.permissions,
-        ),
+            rows=rows,
+        )
+    return ApiResponse(data=rows, meta=meta)
+
+
+@adhesive_movements_router.get("/report/export", response_class=Response)
+async def export_adhesive_day_report(
+    current_user: CurrentUserDependency,
+    service: AdhesiveServiceDependency,
+    preference_service: TablePreferenceServiceDependency,
+    _: Annotated[CurrentUser, Depends(require_permission(ADHESIVES_REPORT_READ))],
+    export_scope: ExportScopeQuery,
+    format: Annotated[str, Query(pattern="^(csv|xlsx)$")] = "csv",
+    report_date: Annotated[date | None, Query(alias="date")] = None,
+    start_date: Annotated[date | None, Query(alias="start_date")] = None,
+    end_date: Annotated[date | None, Query(alias="end_date")] = None,
+) -> Response:
+    start, end = resolve_export_report_range(
+        export_scope=export_scope,
+        report_date=report_date,
+        start_date=start_date,
+        end_date=end_date,
+    )
+    rows = await service.adhesives_day_report_for_export(
+        start_date=start,
+        end_date=end,
+        permissions=current_user.permissions,
+    )
+    return await export_catalog_table(
+        preference_service,
+        user_id=current_user.user_id,
+        table_key="inventory.adhesives_report",
+        permissions=current_user.permissions,
+        filename_stem="adhesives-report",
+        format=format,
+        rows=rows,
     )

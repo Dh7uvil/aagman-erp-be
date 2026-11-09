@@ -5,7 +5,11 @@ from fastapi import APIRouter, Path
 from app.common.dependencies.auth import CurrentUserDependency
 from app.common.schemas.response import ApiResponse
 from app.common.table_preferences.dependencies import TablePreferenceServiceDependency
-from app.common.table_preferences.schemas import TablePreferenceResponse, TablePreferenceUpdate
+from app.common.table_preferences.schemas import (
+    TableExportPreferenceUpdate,
+    TablePreferenceResponse,
+    TablePreferenceUpdate,
+)
 
 router = APIRouter(prefix="/users/me", tags=["Table Preferences"])
 
@@ -45,7 +49,45 @@ async def put_table_preference(
     return ApiResponse(data=data, message="Table columns saved")
 
 
-@router.delete("/table-preferences/{table_key}", response_model=ApiResponse[TablePreferenceResponse])
+@router.put(
+    "/table-preferences/{table_key}/export",
+    response_model=ApiResponse[TablePreferenceResponse],
+)
+async def put_table_export_preference(
+    table_key: TableKeyPath,
+    payload: TableExportPreferenceUpdate,
+    current_user: CurrentUserDependency,
+    service: TablePreferenceServiceDependency,
+) -> ApiResponse[TablePreferenceResponse]:
+    data = await service.upsert_export(
+        current_user.user_id,
+        table_key,
+        payload,
+        permissions=current_user.permissions,
+    )
+    return ApiResponse(data=data, message="Export columns saved")
+
+
+@router.delete(
+    "/table-preferences/{table_key}/export",
+    response_model=ApiResponse[TablePreferenceResponse],
+)
+async def delete_table_export_preference(
+    table_key: TableKeyPath,
+    current_user: CurrentUserDependency,
+    service: TablePreferenceServiceDependency,
+) -> ApiResponse[TablePreferenceResponse]:
+    data = await service.reset_export(
+        current_user.user_id,
+        table_key,
+        permissions=current_user.permissions,
+    )
+    return ApiResponse(data=data, message="Export columns reset to default")
+
+
+@router.delete(
+    "/table-preferences/{table_key}", response_model=ApiResponse[TablePreferenceResponse]
+)
 async def delete_table_preference(
     table_key: TableKeyPath,
     current_user: CurrentUserDependency,

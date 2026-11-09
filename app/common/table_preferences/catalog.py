@@ -3,9 +3,39 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import Literal
 
 PINNED_COLUMN_COUNT = 2
 LOCKED_COLUMN_ID = "actions"
+
+AggregateKind = Literal["sum"]
+
+_AGGREGATE_SUM_KEYS = frozenset(
+    {
+        "rolls",
+        "total_kg",
+        "users_count",
+        "cylinder_count",
+        "cylinder_cost",
+        "total_cylinder_cost",
+        "drum_count",
+        "drum_qty",
+        "total_qty",
+        "total_rate",
+        "in_rolls",
+        "in_kg",
+        "out_rolls",
+        "out_kg",
+        "closing_rolls",
+        "closing_kg",
+        "in_drums",
+        "in_qty",
+        "out_drums",
+        "out_qty",
+        "closing_drums",
+        "closing_qty",
+    }
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -13,6 +43,27 @@ class TableColumnSpec:
     key: str
     default_visible: bool = True
     required_permission: str | None = None
+    exportable: bool = True
+    aggregate: AggregateKind | None = None
+
+
+def col(
+    key: str,
+    *,
+    default_visible: bool = True,
+    required_permission: str | None = None,
+    exportable: bool = True,
+    aggregate: AggregateKind | None = None,
+) -> TableColumnSpec:
+    if aggregate is None and key in _AGGREGATE_SUM_KEYS:
+        aggregate = "sum"
+    return TableColumnSpec(
+        key=key,
+        default_visible=default_visible,
+        required_permission=required_permission,
+        exportable=exportable,
+        aggregate=aggregate,
+    )
 
 
 @dataclass(frozen=True, slots=True)
@@ -42,13 +93,40 @@ class TableCatalogEntry:
     def pinned_keys(self, permissions: frozenset[str]) -> tuple[str, ...]:
         return tuple(self.default_visible(permissions)[: self.pinned_count])
 
+    def exportable_columns(self, permissions: frozenset[str]) -> tuple[TableColumnSpec, ...]:
+        return tuple(column for column in self.effective_columns(permissions) if column.exportable)
+
+    def exportable_keys(self, permissions: frozenset[str]) -> tuple[str, ...]:
+        return tuple(column.key for column in self.exportable_columns(permissions))
+
+    def aggregate_keys(self, permissions: frozenset[str]) -> tuple[str, ...]:
+        return tuple(
+            column.key
+            for column in self.exportable_columns(permissions)
+            if column.aggregate == "sum"
+        )
+
+    def default_export_visible(self, permissions: frozenset[str]) -> list[str]:
+        return [
+            column.key for column in self.exportable_columns(permissions) if column.default_visible
+        ]
+
+    def default_export_order(self, permissions: frozenset[str]) -> list[str]:
+        return list(self.exportable_keys(permissions))
+
+    def column_by_key(self, key: str) -> TableColumnSpec | None:
+        for column in self.columns:
+            if column.key == key:
+                return column
+        return None
+
 
 def _cols(*keys: str) -> tuple[TableColumnSpec, ...]:
-    return tuple(TableColumnSpec(key) for key in keys)
+    return tuple(col(key) for key in keys)
 
 
 def _hidden(*keys: str) -> tuple[TableColumnSpec, ...]:
-    return tuple(TableColumnSpec(key, default_visible=False) for key in keys)
+    return tuple(col(key, default_visible=False) for key in keys)
 
 
 def _entry(table_key: str, visible: tuple[str, ...], *hidden: TableColumnSpec) -> TableCatalogEntry:
@@ -105,23 +183,23 @@ TABLE_CATALOG: dict[str, TableCatalogEntry] = {
         TableCatalogEntry(
             table_key="inventory.materials",
             columns=(
-                TableColumnSpec("company"),
-                TableColumnSpec("product"),
-                TableColumnSpec("micron"),
-                TableColumnSpec("size"),
-                TableColumnSpec("rolls"),
-                TableColumnSpec("total_kg"),
-                TableColumnSpec(
+                col("company"),
+                col("product"),
+                col("micron"),
+                col("size"),
+                col("rolls"),
+                col("total_kg"),
+                col(
                     "price_per_unit",
                     default_visible=False,
                     required_permission="inventory.material.view_price",
                 ),
-                TableColumnSpec(
+                col(
                     "avg_price_per_unit",
                     default_visible=False,
                     required_permission="inventory.material.view_price",
                 ),
-                TableColumnSpec("active", default_visible=False),
+                col("active", default_visible=False),
             ),
         ),
         _entry(
@@ -133,21 +211,21 @@ TABLE_CATALOG: dict[str, TableCatalogEntry] = {
             table_key="inventory.materials_report",
             pinned_count=0,
             columns=(
-                TableColumnSpec("product"),
-                TableColumnSpec("micron"),
-                TableColumnSpec("size"),
-                TableColumnSpec("in_rolls"),
-                TableColumnSpec("in_kg"),
-                TableColumnSpec("out_rolls"),
-                TableColumnSpec("out_kg"),
-                TableColumnSpec("closing_rolls"),
-                TableColumnSpec("closing_kg"),
-                TableColumnSpec(
+                col("product"),
+                col("micron"),
+                col("size"),
+                col("in_rolls"),
+                col("in_kg"),
+                col("out_rolls"),
+                col("out_kg"),
+                col("closing_rolls"),
+                col("closing_kg"),
+                col(
                     "price_per_unit",
                     default_visible=True,
                     required_permission="inventory.material.view_price",
                 ),
-                TableColumnSpec(
+                col(
                     "avg_price_per_unit",
                     default_visible=False,
                     required_permission="inventory.material.view_price",
@@ -157,25 +235,25 @@ TABLE_CATALOG: dict[str, TableCatalogEntry] = {
         TableCatalogEntry(
             table_key="inventory.cylinders",
             columns=(
-                TableColumnSpec("cylinder_number"),
-                TableColumnSpec("company"),
-                TableColumnSpec("product"),
-                TableColumnSpec("status"),
-                TableColumnSpec("cylinder_count"),
-                TableColumnSpec("pet_size", default_visible=False),
-                TableColumnSpec("cylinder_location", default_visible=False),
-                TableColumnSpec(
+                col("cylinder_number"),
+                col("company"),
+                col("product"),
+                col("status"),
+                col("cylinder_count"),
+                col("pet_size", default_visible=False),
+                col("cylinder_location", default_visible=False),
+                col(
                     "cylinder_cost",
                     default_visible=False,
                     required_permission="inventory.cylinder.view_price",
                 ),
-                TableColumnSpec(
+                col(
                     "total_cylinder_cost",
                     default_visible=False,
                     required_permission="inventory.cylinder.view_price",
                 ),
-                TableColumnSpec("created_at", default_visible=False),
-                TableColumnSpec("updated_at", default_visible=False),
+                col("created_at", default_visible=False),
+                col("updated_at", default_visible=False),
             ),
         ),
         _entry(
@@ -186,31 +264,31 @@ TABLE_CATALOG: dict[str, TableCatalogEntry] = {
         TableCatalogEntry(
             table_key="inventory.inks",
             columns=(
-                TableColumnSpec("company"),
-                TableColumnSpec("brand"),
-                TableColumnSpec("color"),
-                TableColumnSpec("hex", default_visible=False),
-                TableColumnSpec("drum_count"),
-                TableColumnSpec("drum_qty", default_visible=False),
-                TableColumnSpec("unit", default_visible=False),
-                TableColumnSpec("total_qty"),
-                TableColumnSpec(
+                col("company"),
+                col("brand"),
+                col("color"),
+                col("hex", default_visible=False),
+                col("drum_count"),
+                col("drum_qty", default_visible=False),
+                col("unit", default_visible=False),
+                col("total_qty"),
+                col(
                     "ink_rate",
                     default_visible=False,
                     required_permission="inventory.ink.view_price",
                 ),
-                TableColumnSpec(
+                col(
                     "avg_price_per_unit",
                     default_visible=False,
                     required_permission="inventory.ink.view_price",
                 ),
-                TableColumnSpec(
+                col(
                     "total_rate",
                     default_visible=False,
                     required_permission="inventory.ink.view_price",
                 ),
-                TableColumnSpec("created_at", default_visible=False),
-                TableColumnSpec("updated_at", default_visible=False),
+                col("created_at", default_visible=False),
+                col("updated_at", default_visible=False),
             ),
         ),
         _entry(
@@ -227,16 +305,16 @@ TABLE_CATALOG: dict[str, TableCatalogEntry] = {
             table_key="inventory.inks_report",
             pinned_count=0,
             columns=(
-                TableColumnSpec("company"),
-                TableColumnSpec("brand"),
-                TableColumnSpec("color"),
-                TableColumnSpec("in_drums"),
-                TableColumnSpec("in_qty"),
-                TableColumnSpec("out_drums"),
-                TableColumnSpec("out_qty"),
-                TableColumnSpec("closing_drums"),
-                TableColumnSpec("closing_qty"),
-                TableColumnSpec(
+                col("company"),
+                col("brand"),
+                col("color"),
+                col("in_drums"),
+                col("in_qty"),
+                col("out_drums"),
+                col("out_qty"),
+                col("closing_drums"),
+                col("closing_qty"),
+                col(
                     "ink_rate",
                     required_permission="inventory.ink.view_price",
                 ),
@@ -246,57 +324,57 @@ TABLE_CATALOG: dict[str, TableCatalogEntry] = {
             table_key="inventory.ink_color_usage",
             pinned_count=0,
             columns=(
-                TableColumnSpec("company"),
-                TableColumnSpec("brand"),
-                TableColumnSpec("drum_count"),
-                TableColumnSpec("drum_qty", default_visible=False),
-                TableColumnSpec("unit", default_visible=False),
-                TableColumnSpec("total_qty"),
-                TableColumnSpec(
+                col("company"),
+                col("brand"),
+                col("drum_count"),
+                col("drum_qty", default_visible=False),
+                col("unit", default_visible=False),
+                col("total_qty"),
+                col(
                     "ink_rate",
                     default_visible=False,
                     required_permission="inventory.ink.view_price",
                 ),
-                TableColumnSpec(
+                col(
                     "avg_price_per_unit",
                     default_visible=False,
                     required_permission="inventory.ink.view_price",
                 ),
-                TableColumnSpec(
+                col(
                     "total_rate",
                     default_visible=False,
                     required_permission="inventory.ink.view_price",
                 ),
-                TableColumnSpec("sheet"),
+                col("sheet"),
             ),
         ),
         TableCatalogEntry(
             table_key="inventory.adhesives",
             columns=(
-                TableColumnSpec("company"),
-                TableColumnSpec("brand"),
-                TableColumnSpec("code"),
-                TableColumnSpec("drum_count"),
-                TableColumnSpec("drum_qty", default_visible=False),
-                TableColumnSpec("unit", default_visible=False),
-                TableColumnSpec("total_qty"),
-                TableColumnSpec(
+                col("company"),
+                col("brand"),
+                col("code"),
+                col("drum_count"),
+                col("drum_qty", default_visible=False),
+                col("unit", default_visible=False),
+                col("total_qty"),
+                col(
                     "adhesive_rate",
                     default_visible=False,
                     required_permission="inventory.adhesive.view_price",
                 ),
-                TableColumnSpec(
+                col(
                     "avg_price_per_unit",
                     default_visible=False,
                     required_permission="inventory.adhesive.view_price",
                 ),
-                TableColumnSpec(
+                col(
                     "total_rate",
                     default_visible=False,
                     required_permission="inventory.adhesive.view_price",
                 ),
-                TableColumnSpec("created_at", default_visible=False),
-                TableColumnSpec("updated_at", default_visible=False),
+                col("created_at", default_visible=False),
+                col("updated_at", default_visible=False),
             ),
         ),
         _entry(
@@ -313,16 +391,16 @@ TABLE_CATALOG: dict[str, TableCatalogEntry] = {
             table_key="inventory.adhesives_report",
             pinned_count=0,
             columns=(
-                TableColumnSpec("company"),
-                TableColumnSpec("brand"),
-                TableColumnSpec("code"),
-                TableColumnSpec("in_drums"),
-                TableColumnSpec("in_qty"),
-                TableColumnSpec("out_drums"),
-                TableColumnSpec("out_qty"),
-                TableColumnSpec("closing_drums"),
-                TableColumnSpec("closing_qty"),
-                TableColumnSpec(
+                col("company"),
+                col("brand"),
+                col("code"),
+                col("in_drums"),
+                col("in_qty"),
+                col("out_drums"),
+                col("out_qty"),
+                col("closing_drums"),
+                col("closing_qty"),
+                col(
                     "adhesive_rate",
                     required_permission="inventory.adhesive.view_price",
                 ),
@@ -332,57 +410,57 @@ TABLE_CATALOG: dict[str, TableCatalogEntry] = {
             table_key="inventory.adhesive_code_usage",
             pinned_count=0,
             columns=(
-                TableColumnSpec("company"),
-                TableColumnSpec("brand"),
-                TableColumnSpec("drum_count"),
-                TableColumnSpec("drum_qty", default_visible=False),
-                TableColumnSpec("unit", default_visible=False),
-                TableColumnSpec("total_qty"),
-                TableColumnSpec(
+                col("company"),
+                col("brand"),
+                col("drum_count"),
+                col("drum_qty", default_visible=False),
+                col("unit", default_visible=False),
+                col("total_qty"),
+                col(
                     "adhesive_rate",
                     default_visible=False,
                     required_permission="inventory.adhesive.view_price",
                 ),
-                TableColumnSpec(
+                col(
                     "avg_price_per_unit",
                     default_visible=False,
                     required_permission="inventory.adhesive.view_price",
                 ),
-                TableColumnSpec(
+                col(
                     "total_rate",
                     default_visible=False,
                     required_permission="inventory.adhesive.view_price",
                 ),
-                TableColumnSpec("sheet"),
+                col("sheet"),
             ),
         ),
         TableCatalogEntry(
             table_key="inventory.solvents",
             columns=(
-                TableColumnSpec("company"),
-                TableColumnSpec("brand"),
-                TableColumnSpec("name"),
-                TableColumnSpec("drum_count"),
-                TableColumnSpec("drum_qty", default_visible=False),
-                TableColumnSpec("unit", default_visible=False),
-                TableColumnSpec("total_qty"),
-                TableColumnSpec(
+                col("company"),
+                col("brand"),
+                col("name"),
+                col("drum_count"),
+                col("drum_qty", default_visible=False),
+                col("unit", default_visible=False),
+                col("total_qty"),
+                col(
                     "solvent_rate",
                     default_visible=False,
                     required_permission="inventory.solvent.view_price",
                 ),
-                TableColumnSpec(
+                col(
                     "avg_price_per_unit",
                     default_visible=False,
                     required_permission="inventory.solvent.view_price",
                 ),
-                TableColumnSpec(
+                col(
                     "total_rate",
                     default_visible=False,
                     required_permission="inventory.solvent.view_price",
                 ),
-                TableColumnSpec("created_at", default_visible=False),
-                TableColumnSpec("updated_at", default_visible=False),
+                col("created_at", default_visible=False),
+                col("updated_at", default_visible=False),
             ),
         ),
         _entry(
@@ -399,16 +477,16 @@ TABLE_CATALOG: dict[str, TableCatalogEntry] = {
             table_key="inventory.solvents_report",
             pinned_count=0,
             columns=(
-                TableColumnSpec("company"),
-                TableColumnSpec("brand"),
-                TableColumnSpec("name"),
-                TableColumnSpec("in_drums"),
-                TableColumnSpec("in_qty"),
-                TableColumnSpec("out_drums"),
-                TableColumnSpec("out_qty"),
-                TableColumnSpec("closing_drums"),
-                TableColumnSpec("closing_qty"),
-                TableColumnSpec(
+                col("company"),
+                col("brand"),
+                col("name"),
+                col("in_drums"),
+                col("in_qty"),
+                col("out_drums"),
+                col("out_qty"),
+                col("closing_drums"),
+                col("closing_qty"),
+                col(
                     "solvent_rate",
                     required_permission="inventory.solvent.view_price",
                 ),
@@ -418,28 +496,28 @@ TABLE_CATALOG: dict[str, TableCatalogEntry] = {
             table_key="inventory.solvent_name_usage",
             pinned_count=0,
             columns=(
-                TableColumnSpec("company"),
-                TableColumnSpec("brand"),
-                TableColumnSpec("drum_count"),
-                TableColumnSpec("drum_qty", default_visible=False),
-                TableColumnSpec("unit", default_visible=False),
-                TableColumnSpec("total_qty"),
-                TableColumnSpec(
+                col("company"),
+                col("brand"),
+                col("drum_count"),
+                col("drum_qty", default_visible=False),
+                col("unit", default_visible=False),
+                col("total_qty"),
+                col(
                     "solvent_rate",
                     default_visible=False,
                     required_permission="inventory.solvent.view_price",
                 ),
-                TableColumnSpec(
+                col(
                     "avg_price_per_unit",
                     default_visible=False,
                     required_permission="inventory.solvent.view_price",
                 ),
-                TableColumnSpec(
+                col(
                     "total_rate",
                     default_visible=False,
                     required_permission="inventory.solvent.view_price",
                 ),
-                TableColumnSpec("sheet"),
+                col("sheet"),
             ),
         ),
     )

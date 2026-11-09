@@ -16,10 +16,10 @@ from app.common.services.audit import AuditWriter, audit_field_changes
 from app.common.utils.datetime import utcnow
 from app.core.config import get_settings
 from app.core.enums import (
-    AuditAction,
-    AuditStatus,
     IDENTITY_MODULE,
     SYSTEM_ADMIN_ROLE_NAME,
+    AuditAction,
+    AuditStatus,
     UserStatus,
 )
 from app.core.exceptions import (
@@ -276,7 +276,9 @@ class AuthService:
             )
             return await self._issue_token_pair(user)
 
-    async def request_password_reset(self, payload: ForgotPasswordRequest) -> ForgotPasswordResponse:
+    async def request_password_reset(
+        self, payload: ForgotPasswordRequest
+    ) -> ForgotPasswordResponse:
         settings = get_settings()
         generic = ForgotPasswordResponse(
             message=(
@@ -354,8 +356,22 @@ class AuthService:
         )
         user_list = list(users)
         roles_by_user = await self.repo.list_roles_for_users([user.id for user in user_list])
-        responses = [await self._to_user_response(user, roles=roles_by_user.get(user.id, [])) for user in user_list]
+        responses = [
+            await self._to_user_response(user, roles=roles_by_user.get(user.id, []))
+            for user in user_list
+        ]
         return responses, total
+
+    async def list_users_for_export(
+        self,
+        *,
+        user_filter: UserFilter,
+    ) -> list[UserResponse]:
+        from app.common.export.fetch import assert_export_total, export_page
+
+        rows, total = await self.list_users(page=export_page(), user_filter=user_filter)
+        assert_export_total(total)
+        return rows
 
     async def create_user(
         self,
@@ -560,6 +576,17 @@ class AuthService:
             for role in role_list
         ], total
 
+    async def list_roles_for_export(
+        self,
+        *,
+        common_filter: BaseFilter | None = None,
+    ) -> list[RoleResponse]:
+        from app.common.export.fetch import assert_export_total, export_page
+
+        rows, total = await self.list_roles(page=export_page(), common_filter=common_filter)
+        assert_export_total(total)
+        return rows
+
     async def create_role(
         self,
         payload: RoleCreate,
@@ -688,7 +715,9 @@ class AuthService:
                 )
             return await self._role_detail(role)
 
-    async def reset_role_permissions(self, role_id: UUID, *, actor_user_id: UUID) -> RoleDetailResponse:
+    async def reset_role_permissions(
+        self, role_id: UUID, *, actor_user_id: UUID
+    ) -> RoleDetailResponse:
         async with transaction(self.session):
             role = await self._require_role(role_id)
             if not role.is_system_role or role.name != SYSTEM_ADMIN_ROLE_NAME:

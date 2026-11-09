@@ -303,7 +303,7 @@ async def test_material_history_keeps_purchase_price_when_micron_price_changes(
     )
     assert history.status_code == 200, history.text
     stock_rows = history.json()["data"]
-    assert all(row["action"] in ("IN", "OUT") for row in stock_rows)
+    assert all(row["action"] in ("IN", "OUT", "OPENING") for row in stock_rows)
     last_in = next(row for row in stock_rows if row["action"] == "IN" and float(row["rolls"]) == 2)
     assert float(last_in["price_per_unit"]) == 88
 

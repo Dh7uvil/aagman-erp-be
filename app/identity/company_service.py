@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from typing import Any
 from uuid import UUID
 
 from sqlalchemy.exc import IntegrityError
@@ -11,7 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.common.schemas.filters import BaseFilter
 from app.common.schemas.pagination import PageParams
 from app.common.services.audit import AuditWriter, audit_field_changes
-from app.core.enums import AddressType, AuditAction, IDENTITY_MODULE
+from app.core.enums import IDENTITY_MODULE, AddressType, AuditAction
 from app.core.exceptions import DuplicateResourceError, ResourceNotFoundError
 from app.db.session import transaction
 from app.identity.models import Company
@@ -45,13 +44,26 @@ class CompanyService:
         rows, total = await self.repo.list(page=page, common_filter=common_filter)
         return [item for item in await self._to_responses(list(rows))], total
 
+    async def list_for_export(
+        self,
+        *,
+        common_filter: BaseFilter | None = None,
+    ) -> list[CompanyResponse]:
+        from app.common.export.fetch import assert_export_total, export_page
+
+        rows, total = await self.list(page=export_page(), common_filter=common_filter)
+        assert_export_total(total)
+        return rows
+
     async def get(self, company_id: UUID) -> CompanyResponse:
         row = await self._require(company_id)
         return (await self._to_responses([row]))[0]
 
     async def create(self, payload: CompanyCreate, *, actor_user_id: UUID) -> CompanyResponse:
         async with transaction(self.session):
-            address_id = await self._upsert_address(None, payload.address, address_type=AddressType.COMPANY)
+            address_id = await self._upsert_address(
+                None, payload.address, address_type=AddressType.COMPANY
+            )
             bill_to_address_id = await self._upsert_address(
                 None,
                 payload.bill_to_address,

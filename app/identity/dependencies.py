@@ -7,9 +7,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.session import get_db
 from app.identity.audit_service import AuditLogService
+from app.identity.company_service import CompanyService
 from app.identity.org_service import OrganizationService
 from app.identity.service import AuthService
-from app.identity.company_service import CompanyService
 from app.identity.warehouse_service import WarehouseService
 
 

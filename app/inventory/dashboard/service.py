@@ -2,18 +2,15 @@
 
 from __future__ import annotations
 
-from datetime import date, datetime, timedelta, timezone
+from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal
 from uuid import UUID
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.inventory.adhesives.models import AdhesiveBrand, AdhesiveCode
-from app.inventory.solvents.models import SolventBrand, SolventName
-from app.inventory.inks.models import InkBrand, InkColor
-
 from app.core.permissions import has_permission
+from app.inventory.adhesives.models import AdhesiveBrand, AdhesiveCode
 from app.inventory.catalog import (
     ADHESIVE_VIEW_PRICE,
     CYLINDER_VIEW_PRICE,
@@ -22,35 +19,37 @@ from app.inventory.catalog import (
     SOLVENT_VIEW_PRICE,
 )
 from app.inventory.dashboard.repository import DashboardRepository
-from app.inventory.pricing import valuation_unit_price
-from app.inventory.repository import MovementRepository
 from app.inventory.dashboard.schemas import (
-    DashboardRange,
+    AdhesivesDashboard,
+    AdhesivesDashboardKpis,
     CylinderActivityBucket,
-    CylinderStatusCount,
     CylindersDashboard,
     CylindersDashboardKpis,
+    CylinderStatusCount,
+    DashboardRange,
     DeadStockItem,
+    InkDeadStockItem,
+    InksDashboard,
+    InksDashboardKpis,
     MaterialsDashboard,
     MaterialsDashboardKpis,
     MovementActivityBucket,
     OpenCylinderPause,
     ReorderWatchItem,
-    StockByProduct,
-    TopCompanyCylinders,
-    TopConsumedSku,
-    AdhesivesDashboard,
-    AdhesivesDashboardKpis,
-    InkDeadStockItem,
-    InksDashboard,
-    InksDashboardKpis,
-    StockByCompany,
-    TopConsumedAdhesiveLine,
-    TopConsumedInkLine,
-    TopConsumedSolventLine,
     SolventsDashboard,
     SolventsDashboardKpis,
+    StockByCompany,
+    StockByProduct,
+    TopCompanyCylinders,
+    TopConsumedAdhesiveLine,
+    TopConsumedInkLine,
+    TopConsumedSku,
+    TopConsumedSolventLine,
 )
+from app.inventory.inks.models import InkBrand, InkColor
+from app.inventory.pricing import valuation_unit_price
+from app.inventory.repository import MovementRepository
+from app.inventory.solvents.models import SolventBrand, SolventName
 
 
 class DashboardService:
@@ -112,12 +111,12 @@ class DashboardService:
         companies = await self.repo.top_companies_by_active_cylinders(limit=5)
         pauses = await self.repo.longest_open_pauses(limit=5)
 
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         open_pauses: list[OpenCylinderPause] = []
         for job, company_name, pause in pauses:
             paused_at = pause.paused_at
             if paused_at.tzinfo is None:
-                paused_at = paused_at.replace(tzinfo=timezone.utc)
+                paused_at = paused_at.replace(tzinfo=UTC)
             delta = now - paused_at
             days_paused = max(delta.days, 0)
             open_pauses.append(
@@ -289,9 +288,7 @@ class DashboardService:
         lines = await self.repo.list_active_ink_lines()
         active_lines = len(lines)
         total_qty = sum((Decimal(line.total_qty or 0) for line in lines), Decimal("0"))
-        out_of_stock = sum(
-            1 for line in lines if (line.total_qty or Decimal("0")) <= 0
-        )
+        out_of_stock = sum(1 for line in lines if (line.total_qty or Decimal("0")) <= 0)
 
         stock_value = Decimal("0")
         valued_count = 0
@@ -332,10 +329,14 @@ class DashboardService:
         else:
             colors = {}
         for line in lines:
-            line_labels[line.id] = f"{brands.get(line.brand_id, '')} · {colors.get(line.color_id, '')}"
+            line_labels[line.id] = (
+                f"{brands.get(line.brand_id, '')} · {colors.get(line.color_id, '')}"
+            )
 
         top_consumed: list[TopConsumedInkLine] = []
-        for line_id, out_qty in sorted(out_by_line.items(), key=lambda pair: pair[1], reverse=True)[:5]:
+        for line_id, out_qty in sorted(out_by_line.items(), key=lambda pair: pair[1], reverse=True)[
+            :5
+        ]:
             name = line_labels.get(line_id)
             if name is None:
                 continue
@@ -404,9 +405,7 @@ class DashboardService:
         lines = await self.repo.list_active_adhesive_lines()
         active_lines = len(lines)
         total_qty = sum((Decimal(line.total_qty or 0) for line in lines), Decimal("0"))
-        out_of_stock = sum(
-            1 for line in lines if (line.total_qty or Decimal("0")) <= 0
-        )
+        out_of_stock = sum(1 for line in lines if (line.total_qty or Decimal("0")) <= 0)
 
         stock_value = Decimal("0")
         valued_count = 0
@@ -452,7 +451,9 @@ class DashboardService:
             )
 
         top_consumed: list[TopConsumedAdhesiveLine] = []
-        for line_id, out_qty in sorted(out_by_line.items(), key=lambda pair: pair[1], reverse=True)[:5]:
+        for line_id, out_qty in sorted(out_by_line.items(), key=lambda pair: pair[1], reverse=True)[
+            :5
+        ]:
             name = line_labels.get(line_id)
             if name is None:
                 continue
@@ -501,9 +502,7 @@ class DashboardService:
         lines = await self.repo.list_active_solvent_lines()
         active_lines = len(lines)
         total_qty = sum((Decimal(line.total_qty or 0) for line in lines), Decimal("0"))
-        out_of_stock = sum(
-            1 for line in lines if (line.total_qty or Decimal("0")) <= 0
-        )
+        out_of_stock = sum(1 for line in lines if (line.total_qty or Decimal("0")) <= 0)
 
         stock_value = Decimal("0")
         valued_count = 0
@@ -549,7 +548,9 @@ class DashboardService:
             )
 
         top_consumed: list[TopConsumedSolventLine] = []
-        for line_id, out_qty in sorted(out_by_line.items(), key=lambda pair: pair[1], reverse=True)[:5]:
+        for line_id, out_qty in sorted(out_by_line.items(), key=lambda pair: pair[1], reverse=True)[
+            :5
+        ]:
             label = line_labels.get(line_id)
             if label is None:
                 continue

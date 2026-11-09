@@ -18,7 +18,7 @@ from sqlalchemy.dialects.postgresql import UUID as PostgreSQLUUID
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.core.enums import MaterialMovementDirection
-from app.db.base import SoftDeleteModel, TimestampedModel
+from app.db.base import SoftDeleteModel
 from app.db.mixins import AuditUserMixin, IsActiveMixin
 
 
@@ -110,14 +110,20 @@ class InkLine(SoftDeleteModel):
         ForeignKey("ink_colors.id", ondelete="RESTRICT"),
         nullable=False,
     )
-    drum_count: Mapped[Decimal] = mapped_column(Numeric(18, 4), nullable=False, server_default=text("0"))
-    drum_qty: Mapped[Decimal] = mapped_column(Numeric(18, 4), nullable=False, server_default=text("0"))
+    drum_count: Mapped[Decimal] = mapped_column(
+        Numeric(18, 4), nullable=False, server_default=text("0")
+    )
+    drum_qty: Mapped[Decimal] = mapped_column(
+        Numeric(18, 4), nullable=False, server_default=text("0")
+    )
     drum_unit_id: Mapped[UUID] = mapped_column(
         PostgreSQLUUID(as_uuid=True),
         ForeignKey("inventory_units.id", ondelete="RESTRICT"),
         nullable=False,
     )
-    total_qty: Mapped[Decimal] = mapped_column(Numeric(18, 4), nullable=False, server_default=text("0"))
+    total_qty: Mapped[Decimal] = mapped_column(
+        Numeric(18, 4), nullable=False, server_default=text("0")
+    )
     ink_rate: Mapped[Decimal | None] = mapped_column(Numeric(18, 4), nullable=True)
     total_rate: Mapped[Decimal | None] = mapped_column(Numeric(18, 4), nullable=True)
 

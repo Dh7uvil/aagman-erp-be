@@ -7,7 +7,7 @@ from datetime import date
 from decimal import Decimal
 from uuid import UUID
 
-from sqlalchemy import Select, and_, func, or_, select
+from sqlalchemy import and_, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.common.repositories.base import BaseRepository
@@ -200,7 +200,9 @@ class InkLineRepository:
     ) -> tuple[list[InkLine], int]:
         allowed_sort = frozenset({"created_at", "updated_at"})
         sort_by = common_filter.sort_by if common_filter and common_filter.sort_by else "created_at"
-        sort_order = common_filter.sort_order if common_filter and common_filter.sort_order else "desc"
+        sort_order = (
+            common_filter.sort_order if common_filter and common_filter.sort_order else "desc"
+        )
         if sort_by not in allowed_sort:
             allowed = ", ".join(sorted(allowed_sort))
             raise ValidationError(f"sort_by must be one of: {allowed}")
@@ -306,7 +308,8 @@ class InkMovementRepository:
                     0,
                 ),
                 func.coalesce(func.sum(InkMovement.ink_rate), 0),
-            ).where(
+            )
+            .where(
                 InkMovement.ink_line_id.in_(unique),
                 InkMovement.deleted_at.is_(None),
                 InkMovement.direction.in_(
@@ -316,7 +319,8 @@ class InkMovementRepository:
                     )
                 ),
                 InkMovement.ink_rate.is_not(None),
-            ).group_by(InkMovement.ink_line_id)
+            )
+            .group_by(InkMovement.ink_line_id)
         )
         return {
             line_id: PurchasePriceStats(
@@ -388,13 +392,18 @@ class InkMovementRepository:
             select(InkMovement.direction, InkMovement.drums, InkMovement.quantity).where(
                 InkMovement.ink_line_id == line_id,
                 InkMovement.deleted_at.is_(None),
-                InkMovement.movement_date <= through_date,
+                or_(
+                    InkMovement.direction == MaterialMovementDirection.OPENING.value,
+                    InkMovement.movement_date <= through_date,
+                ),
             )
         )
         drums = Decimal("0")
         qty = Decimal("0")
         for direction, row_drums, row_qty in rows.all():
-            sign = Decimal("-1") if direction == MaterialMovementDirection.OUT.value else Decimal("1")
+            sign = (
+                Decimal("-1") if direction == MaterialMovementDirection.OUT.value else Decimal("1")
+            )
             drums += sign * Decimal(row_drums)
             qty += sign * Decimal(row_qty)
         return drums, qty

@@ -126,8 +126,7 @@ def search_clause(
         column_ilike(mapped_column(model, field), pattern) for field in fields
     ]
     clauses.extend(
-        related_exists(spec, parent=model, tenant_id=tenant_id, pattern=pattern)
-        for spec in related
+        related_exists(spec, parent=model, tenant_id=tenant_id, pattern=pattern) for spec in related
     )
     return or_(*clauses)
 

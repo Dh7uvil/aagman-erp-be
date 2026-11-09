@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from uuid import UUID
 
+from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -12,16 +13,18 @@ from app.common.schemas.pagination import PageParams
 from app.common.schemas.related_documents import RelatedDocumentRef
 from app.common.services.audit import AuditWriter, audit_field_changes
 from app.common.services.entity_history import EntityHistoryEntry, EntityHistoryService
-from app.core.enums import AuditAction, INVENTORY_MODULE, CylinderStatus
+from app.core.enums import INVENTORY_MODULE, AuditAction, CylinderStatus
 from app.core.exceptions import DuplicateResourceError, ResourceNotFoundError, ValidationError
 from app.db.session import transaction
 from app.identity.models import Company
 from app.identity.org_repository import OrganizationRepository
 from app.identity.schemas import AddressResponse, format_address_label
-from app.inventory.cylinders.models import Cylinder
-from app.inventory.cylinders.repository import CylinderReturnRepository, CylinderRepository
-from app.inventory.cylinders.schemas import CylinderReturnCreate, CylinderReturnResponse, CylinderReturnUpdate
-from sqlalchemy import select
+from app.inventory.cylinders.repository import CylinderRepository, CylinderReturnRepository
+from app.inventory.cylinders.schemas import (
+    CylinderReturnCreate,
+    CylinderReturnResponse,
+    CylinderReturnUpdate,
+)
 
 
 class CylinderReturnService:
@@ -46,8 +49,28 @@ class CylinderReturnService:
             filters["company_id"] = company_id
         if cylinder_id is not None:
             filters["cylinder_id"] = cylinder_id
-        rows, total = await self.repo.list(page=page, common_filter=common_filter, filters=filters or None)
+        rows, total = await self.repo.list(
+            page=page, common_filter=common_filter, filters=filters or None
+        )
         return [await self._to_response(row) for row in rows], total
+
+    async def list_returns_for_export(
+        self,
+        *,
+        common_filter: BaseFilter | None,
+        company_id: UUID | None,
+        cylinder_id: UUID | None,
+    ) -> list[CylinderReturnResponse]:
+        from app.common.export.fetch import assert_export_total, export_page
+
+        rows, total = await self.list_returns(
+            page=export_page(),
+            common_filter=common_filter,
+            company_id=company_id,
+            cylinder_id=cylinder_id,
+        )
+        assert_export_total(total)
+        return rows
 
     async def get_return(self, return_id: UUID) -> CylinderReturnResponse:
         row = await self._require(return_id)
@@ -108,7 +131,9 @@ class CylinderReturnService:
         async with transaction(self.session):
             row = await self._require(return_id)
             old = await self._return_audit_snapshot(row)
-            old = {k: v for k, v in old.items() if k in ("company_name", "cylinder_number", "remarks")}
+            old = {
+                k: v for k, v in old.items() if k in ("company_name", "cylinder_number", "remarks")
+            }
             if "company_id" in values and values["company_id"] is not None:
                 job = await self.cylinder_repo.get(row.cylinder_id)
                 if job is not None and job.company_id != values["company_id"]:
@@ -118,7 +143,9 @@ class CylinderReturnService:
             if updated is None:
                 raise ResourceNotFoundError("Cylinder return not found")
             new = await self._return_audit_snapshot(updated)
-            new = {k: v for k, v in new.items() if k in ("company_name", "cylinder_number", "remarks")}
+            new = {
+                k: v for k, v in new.items() if k in ("company_name", "cylinder_number", "remarks")
+            }
             if audit_field_changes(old, new):
                 await self.audit.write(
                     user_id=actor_user_id,
@@ -183,7 +210,6 @@ class CylinderReturnService:
         }
 
     async def _require(self, return_id: UUID):
-        from app.inventory.cylinders.models import CylinderReturn
 
         row = await self.repo.get(return_id)
         if row is None:

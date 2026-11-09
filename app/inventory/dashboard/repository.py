@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import date, datetime, time, timedelta, timezone
+from datetime import UTC, date, datetime, time, timedelta
 from decimal import Decimal
 from uuid import UUID
 
@@ -12,14 +12,12 @@ from sqlalchemy.orm import aliased
 
 from app.core.enums import CylinderStatus, MaterialCategoryKind, MaterialMovementDirection
 from app.identity.models import Company
-from app.inventory.cylinders.models import CylinderReturn, Cylinder, CylinderPause
 from app.inventory.adhesives.models import (
-    AdhesiveBrand,
-    AdhesiveCode,
     AdhesiveLine,
     AdhesiveMovement,
     AdhesiveSheet,
 )
+from app.inventory.cylinders.models import Cylinder, CylinderPause, CylinderReturn
 from app.inventory.inks.models import InkBrand, InkColor, InkLine, InkMovement, InkSheet
 from app.inventory.models import InventoryUnit, MaterialCategory, MaterialMovement
 
@@ -29,11 +27,11 @@ def _job_active() -> tuple[object, ...]:
 
 
 def _datetime_start(d: date) -> datetime:
-    return datetime.combine(d, time.min, tzinfo=timezone.utc)
+    return datetime.combine(d, time.min, tzinfo=UTC)
 
 
 def _datetime_end(d: date) -> datetime:
-    return datetime.combine(d, time.max, tzinfo=timezone.utc)
+    return datetime.combine(d, time.max, tzinfo=UTC)
 
 
 class DashboardRepository:
@@ -42,9 +40,7 @@ class DashboardRepository:
 
     async def job_status_counts(self) -> list[tuple[str, int]]:
         rows = await self.session.execute(
-            select(Cylinder.status, func.count())
-            .where(*_job_active())
-            .group_by(Cylinder.status)
+            select(Cylinder.status, func.count()).where(*_job_active()).group_by(Cylinder.status)
         )
         return [(str(status), int(count)) for status, count in rows.all()]
 
@@ -138,9 +134,7 @@ class DashboardRepository:
             .group_by(return_bucket)
             .order_by(return_bucket)
         )
-        returns_by_bucket = {
-            row[0]: int(row[1]) for row in return_rows.all() if row[0] is not None
-        }
+        returns_by_bucket = {row[0]: int(row[1]) for row in return_rows.all() if row[0] is not None}
 
         all_keys = sorted(set(jobs_by_bucket) | set(returns_by_bucket))
         return [
@@ -148,7 +142,9 @@ class DashboardRepository:
             for bucket in all_keys
         ]
 
-    async def top_companies_by_active_cylinders(self, *, limit: int = 5) -> list[tuple[UUID, str, int, int]]:
+    async def top_companies_by_active_cylinders(
+        self, *, limit: int = 5
+    ) -> list[tuple[UUID, str, int, int]]:
         active_statuses = (CylinderStatus.ACTIVE.value,)
         rows = await self.session.execute(
             select(
@@ -172,7 +168,9 @@ class DashboardRepository:
             for company_id, name, job_count, cylinders in rows.all()
         ]
 
-    async def longest_open_pauses(self, *, limit: int = 5) -> list[tuple[Cylinder, str, CylinderPause]]:
+    async def longest_open_pauses(
+        self, *, limit: int = 5
+    ) -> list[tuple[Cylinder, str, CylinderPause]]:
         rows = await self.session.execute(
             select(Cylinder, Company.name, CylinderPause)
             .join(CylinderPause, CylinderPause.cylinder_id == Cylinder.id)

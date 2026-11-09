@@ -62,7 +62,38 @@ class AuditLogService:
             responses.append(await self._to_response(row, users))
         return responses, total
 
-    async def summarize(self, *, common_filter: BaseFilter | None = None) -> AuditLogSummaryResponse:
+    async def list_logs_for_export(
+        self,
+        *,
+        common_filter: BaseFilter | None = None,
+        module: str | None = None,
+        action: str | None = None,
+        user_id: UUID | None = None,
+        entity_type: str | None = None,
+        entity_id: UUID | None = None,
+    ) -> list[AuditLogResponse]:
+        from app.common.export.fetch import assert_export_total
+
+        rows = await self.repo.export_logs(
+            common_filter=common_filter,
+            module=module,
+            action=action,
+            user_id=user_id,
+            entity_type=entity_type,
+            entity_id=entity_id,
+        )
+        assert_export_total(len(rows))
+        user_ids = [row.user_id for row in rows if row.user_id is not None]
+        users = await self.org.get_users_by_ids(user_ids)
+        await self.display.preload_for_logs(rows)
+        responses: list[AuditLogResponse] = []
+        for row in rows:
+            responses.append(await self._to_response(row, users))
+        return responses
+
+    async def summarize(
+        self, *, common_filter: BaseFilter | None = None
+    ) -> AuditLogSummaryResponse:
         date_filter = None
         if common_filter is not None:
             date_filter = BaseFilter(
@@ -183,7 +214,9 @@ class AuditLogService:
             status=row.status,
         )
 
-    async def _to_detail_response(self, row: AuditLog, users: dict[UUID, User]) -> AuditLogDetailResponse:
+    async def _to_detail_response(
+        self, row: AuditLog, users: dict[UUID, User]
+    ) -> AuditLogDetailResponse:
         base = await self._to_response(row, users)
         old_values = _json_object(row.old_values)
         new_values = _json_object(row.new_values)

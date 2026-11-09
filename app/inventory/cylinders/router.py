@@ -3,42 +3,48 @@
 from typing import Annotated
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, File, UploadFile, status
+from fastapi import APIRouter, Depends, File, Query, UploadFile, status
 from fastapi.responses import Response
 
 from app.common.dependencies.auth import CurrentUser, CurrentUserDependency
+from app.common.dependencies.export_scope import ExportScopeQuery, is_full_module_export
 from app.common.dependencies.pagination import PaginationDependency
 from app.common.dependencies.permissions import require_permission
+from app.common.export.service import compute_list_column_totals, export_catalog_table
 from app.common.schemas.pagination import paginated_response
 from app.common.schemas.response import ApiResponse
 from app.common.services.entity_history import EntityHistoryEntry
+from app.common.table_preferences.dependencies import TablePreferenceServiceDependency
 from app.common.utils.files import max_upload_bytes
 from app.core.config import get_settings
 from app.core.exceptions import ValidationError
 from app.inventory.catalog import (
-    CYLINDER_RETURN_CREATE,
-    CYLINDER_RETURN_DELETE,
-    CYLINDER_RETURN_READ,
-    CYLINDER_RETURN_UPDATE,
     CYLINDER_CREATE,
     CYLINDER_DELETE,
     CYLINDER_HISTORY,
     CYLINDER_READ,
+    CYLINDER_RETURN_CREATE,
+    CYLINDER_RETURN_DELETE,
+    CYLINDER_RETURN_READ,
+    CYLINDER_RETURN_UPDATE,
     CYLINDER_UPDATE,
 )
-from app.inventory.cylinders.dependencies import CylinderReturnServiceDependency, CylinderServiceDependency
+from app.inventory.cylinders.dependencies import (
+    CylinderReturnServiceDependency,
+    CylinderServiceDependency,
+)
 from app.inventory.cylinders.schemas import (
     CYLINDER_FILE_SLOTS,
-    CylinderReturnCreate,
-    CylinderReturnFilter,
-    CylinderReturnResponse,
-    CylinderReturnUpdate,
     CylinderCreate,
     CylinderFilter,
     CylinderListItem,
     CylinderPauseRequest,
     CylinderResponse,
     CylinderResumeRequest,
+    CylinderReturnCreate,
+    CylinderReturnFilter,
+    CylinderReturnResponse,
+    CylinderReturnUpdate,
     CylinderUpdate,
 )
 
@@ -69,9 +75,11 @@ async def _read_upload(file: UploadFile, *, max_bytes: int) -> bytes:
 async def list_cylinders(
     page: PaginationDependency,
     service: CylinderServiceDependency,
+    preference_service: TablePreferenceServiceDependency,
     filters: Annotated[CylinderFilter, Depends()],
     current_user: CurrentUserDependency,
     _: Annotated[CurrentUser, Depends(require_permission(CYLINDER_READ))],
+    include_column_totals: Annotated[bool, Query()] = False,
 ) -> ApiResponse[list[CylinderListItem]]:
     rows, total = await service.list_cylinders(
         page=page,
@@ -81,10 +89,57 @@ async def list_cylinders(
         include_closed=filters.include_closed,
         permissions=current_user.permissions,
     )
-    return paginated_response(rows, params=page, total=total)
+    column_totals = None
+    if include_column_totals:
+        export_rows = await service.list_cylinders_for_export(
+            common_filter=filters,
+            status=filters.status,
+            company_id=filters.company_id,
+            include_closed=filters.include_closed,
+            permissions=current_user.permissions,
+        )
+        column_totals = await compute_list_column_totals(
+            preference_service,
+            user_id=current_user.user_id,
+            table_key="inventory.cylinders",
+            permissions=current_user.permissions,
+            rows=export_rows,
+        )
+    return paginated_response(rows, params=page, total=total, column_totals=column_totals)
 
 
-@cylinders_router.post("", response_model=ApiResponse[CylinderResponse], status_code=status.HTTP_201_CREATED)
+@cylinders_router.get("/export", response_class=Response)
+async def export_cylinders(
+    current_user: CurrentUserDependency,
+    service: CylinderServiceDependency,
+    preference_service: TablePreferenceServiceDependency,
+    filters: Annotated[CylinderFilter, Depends()],
+    _: Annotated[CurrentUser, Depends(require_permission(CYLINDER_READ))],
+    export_scope: ExportScopeQuery,
+    format: Annotated[str, Query(pattern="^(csv|xlsx)$")] = "csv",
+) -> Response:
+    scope_filters = CylinderFilter() if is_full_module_export(export_scope) else filters
+    rows = await service.list_cylinders_for_export(
+        common_filter=scope_filters,
+        status=scope_filters.status,
+        company_id=scope_filters.company_id,
+        include_closed=scope_filters.include_closed,
+        permissions=current_user.permissions,
+    )
+    return await export_catalog_table(
+        preference_service,
+        user_id=current_user.user_id,
+        table_key="inventory.cylinders",
+        permissions=current_user.permissions,
+        filename_stem="cylinders",
+        format=format,
+        rows=rows,
+    )
+
+
+@cylinders_router.post(
+    "", response_model=ApiResponse[CylinderResponse], status_code=status.HTTP_201_CREATED
+)
 async def create_cylinder(
     payload: CylinderCreate,
     current_user: CurrentUserDependency,
@@ -106,7 +161,9 @@ async def get_cylinder(
     service: CylinderServiceDependency,
     _: Annotated[CurrentUser, Depends(require_permission(CYLINDER_READ))],
 ) -> ApiResponse[CylinderResponse]:
-    return ApiResponse(data=await service.get_cylinder(cylinder_id, permissions=current_user.permissions))
+    return ApiResponse(
+        data=await service.get_cylinder(cylinder_id, permissions=current_user.permissions)
+    )
 
 
 @cylinders_router.patch("/{cylinder_id}", response_model=ApiResponse[CylinderResponse])
@@ -171,7 +228,9 @@ async def resume_cylinder(
     return ApiResponse(data=row, message="Cylinder resumed")
 
 
-@cylinders_router.get("/{cylinder_id}/history", response_model=ApiResponse[list[EntityHistoryEntry]])
+@cylinders_router.get(
+    "/{cylinder_id}/history", response_model=ApiResponse[list[EntityHistoryEntry]]
+)
 async def cylinder_history(
     cylinder_id: UUID,
     page: PaginationDependency,
@@ -241,7 +300,9 @@ async def download_cylinder_file(
     return Response(content=body, media_type=content_type)
 
 
-@cylinders_router.delete("/{cylinder_id}/files/{slot}", response_model=ApiResponse[CylinderResponse])
+@cylinders_router.delete(
+    "/{cylinder_id}/files/{slot}", response_model=ApiResponse[CylinderResponse]
+)
 async def delete_cylinder_file(
     cylinder_id: UUID,
     slot: str,
@@ -260,9 +321,12 @@ async def delete_cylinder_file(
 @returns_router.get("", response_model=ApiResponse[list[CylinderReturnResponse]])
 async def list_cylinder_returns(
     page: PaginationDependency,
+    current_user: CurrentUserDependency,
     service: CylinderReturnServiceDependency,
+    preference_service: TablePreferenceServiceDependency,
     filters: Annotated[CylinderReturnFilter, Depends()],
     _: Annotated[CurrentUser, Depends(require_permission(CYLINDER_RETURN_READ))],
+    include_column_totals: Annotated[bool, Query()] = False,
 ) -> ApiResponse[list[CylinderReturnResponse]]:
     rows, total = await service.list_returns(
         page=page,
@@ -270,7 +334,48 @@ async def list_cylinder_returns(
         company_id=filters.company_id,
         cylinder_id=filters.cylinder_id,
     )
-    return paginated_response(rows, params=page, total=total)
+    column_totals = None
+    if include_column_totals:
+        export_rows = await service.list_returns_for_export(
+            common_filter=filters,
+            company_id=filters.company_id,
+            cylinder_id=filters.cylinder_id,
+        )
+        column_totals = await compute_list_column_totals(
+            preference_service,
+            user_id=current_user.user_id,
+            table_key="inventory.cylinder_returns",
+            permissions=current_user.permissions,
+            rows=export_rows,
+        )
+    return paginated_response(rows, params=page, total=total, column_totals=column_totals)
+
+
+@returns_router.get("/export", response_class=Response)
+async def export_cylinder_returns(
+    current_user: CurrentUserDependency,
+    service: CylinderReturnServiceDependency,
+    preference_service: TablePreferenceServiceDependency,
+    filters: Annotated[CylinderReturnFilter, Depends()],
+    _: Annotated[CurrentUser, Depends(require_permission(CYLINDER_RETURN_READ))],
+    export_scope: ExportScopeQuery,
+    format: Annotated[str, Query(pattern="^(csv|xlsx)$")] = "csv",
+) -> Response:
+    scope_filters = CylinderReturnFilter() if is_full_module_export(export_scope) else filters
+    rows = await service.list_returns_for_export(
+        common_filter=scope_filters,
+        company_id=scope_filters.company_id,
+        cylinder_id=scope_filters.cylinder_id,
+    )
+    return await export_catalog_table(
+        preference_service,
+        user_id=current_user.user_id,
+        table_key="inventory.cylinder_returns",
+        permissions=current_user.permissions,
+        filename_stem="cylinder-returns",
+        format=format,
+        rows=rows,
+    )
 
 
 @returns_router.post(

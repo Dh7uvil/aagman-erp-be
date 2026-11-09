@@ -9,7 +9,9 @@ from app.db.session import get_db
 from app.inventory.adhesives.service import AdhesiveService
 
 
-async def get_adhesive_service(session: Annotated[AsyncSession, Depends(get_db)]) -> AdhesiveService:
+async def get_adhesive_service(
+    session: Annotated[AsyncSession, Depends(get_db)],
+) -> AdhesiveService:
     return AdhesiveService(session)
 
 
