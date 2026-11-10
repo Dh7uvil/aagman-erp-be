@@ -1,0 +1,21 @@
+# Non-secret SAM defaults. Parameter values come from sam deploy --parameter-overrides
+# or GitHub Actions secret SAM_PARAMETER_OVERRIDES (see docs/deploy-aws.md).
+
+version = 0.1
+
+[default.global.parameters]
+stack_name = "aagman-erp-api"
+
+[prod.global.parameters]
+stack_name = "aagman-erp-api"
+region = "ap-south-1"
+
+[prod.build.parameters]
+cached = true
+parallel = true
+
+[prod.deploy.parameters]
+capabilities = "CAPABILITY_IAM"
+confirm_changeset = false
+resolve_s3 = true
+resolve_image_repos = true

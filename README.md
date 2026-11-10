@@ -48,6 +48,10 @@ Copy the `S3_*` and `AWS_*` values from `.env.example` into `.env`. The MinIO co
 uv run uvicorn app.main:app --reload
 ```
 
+## Deploy to AWS
+
+Lambda (container) + HTTP API via SAM. See [docs/deploy-aws.md](docs/deploy-aws.md). Merges to **`master`** deploy automatically after CI when GitHub OIDC and secrets are configured.
+
 Health: `GET /health`  
 API base: `/api/v1` (auth, users, roles, organization, branches, departments, warehouses, audit logs)
 

@@ -1,0 +1,33 @@
+# Copy to samconfig.toml and fill parameter_overrides (do not commit secrets).
+# Deploy: sam build -t infra/sam/template.yaml && sam deploy --config-env prod
+
+version = 0.1
+
+[default.global.parameters]
+stack_name = "aagman-erp-api"
+
+[prod.global.parameters]
+stack_name = "aagman-erp-api"
+region = "ap-south-1"
+
+[prod.build.parameters]
+cached = true
+parallel = true
+
+[prod.deploy.parameters]
+capabilities = "CAPABILITY_IAM"
+confirm_changeset = false
+resolve_s3 = true
+resolve_image_repos = true
+image_repositories = []
+# Example — replace with your values:
+# parameter_overrides = """
+#   CorsOrigins=https://master.xxxxx.amplifyapp.com
+#   DatabaseHost=your-rds.xxxxx.ap-south-1.rds.amazonaws.com
+#   DatabaseUser=postgres
+#   DatabasePasswordSecretArn=arn:aws:secretsmanager:ap-south-1:123456789012:secret:...
+#   JwtSecretArn=arn:aws:secretsmanager:ap-south-1:123456789012:secret:...
+#   S3BucketName=your-bucket
+#   PrivateSubnetIds=subnet-aaa,subnet-bbb
+#   LambdaSecurityGroupId=sg-xxxxxxxx
+# """
