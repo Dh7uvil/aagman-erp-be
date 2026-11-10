@@ -1,0 +1,502 @@
+"""Inventory data access."""
+
+from __future__ import annotations
+
+from collections.abc import Mapping, Sequence
+from datetime import date
+from decimal import Decimal
+from uuid import UUID
+
+from sqlalchemy import func, literal, or_, select
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import aliased
+from sqlalchemy.sql.elements import ColumnElement
+
+from app.common.models.audit_log import AuditLog
+from app.common.repositories.base import BaseRepository
+from app.common.schemas.filters import BaseFilter
+from app.common.schemas.pagination import PageParams
+from app.core.enums import MaterialCategoryKind, MaterialMovementDirection
+from app.identity.models import Company
+from app.inventory.models import InventoryUnit, MaterialCategory, MaterialMovement
+from app.inventory.pricing import PurchasePriceStats
+
+
+class UnitRepository:
+    def __init__(self, session: AsyncSession) -> None:
+        self.session = session
+        self._repo = BaseRepository(
+            session,
+            InventoryUnit,
+            allowed_sort_fields=frozenset({"created_at", "updated_at", "name", "code"}),
+            allowed_filter_fields=frozenset({"is_active"}),
+            search_fields=frozenset({"code", "name"}),
+        )
+
+    async def get(self, unit_id: UUID) -> InventoryUnit | None:
+        return await self._repo.get(unit_id)
+
+    async def get_by_code(self, code: str) -> InventoryUnit | None:
+        result = await self.session.execute(
+            select(InventoryUnit).where(
+                InventoryUnit.code == code,
+                InventoryUnit.deleted_at.is_(None),
+            )
+        )
+        return result.scalar_one_or_none()
+
+    async def list(
+        self,
+        *,
+        page: PageParams,
+        common_filter: BaseFilter | None = None,
+        filters: Mapping[str, object] | None = None,
+    ) -> tuple[Sequence[InventoryUnit], int]:
+        return await self._repo.list(page=page, common_filter=common_filter, filters=filters)
+
+    async def create(self, values: Mapping[str, object]) -> InventoryUnit:
+        return await self._repo.create(values)
+
+    async def update(self, unit_id: UUID, values: Mapping[str, object]) -> InventoryUnit | None:
+        return await self._repo.update(unit_id, values)
+
+    async def soft_delete(self, unit_id: UUID) -> InventoryUnit | None:
+        return await self._repo.soft_delete(unit_id)
+
+
+class CategoryRepository:
+    def __init__(self, session: AsyncSession) -> None:
+        self.session = session
+        self._repo = BaseRepository(
+            session,
+            MaterialCategory,
+            allowed_sort_fields=frozenset({"created_at", "updated_at", "name", "size"}),
+            allowed_filter_fields=frozenset(
+                {"is_active", "parent_id", "category_kind", "company_id"}
+            ),
+            search_fields=frozenset({"name"}),
+        )
+
+    async def get(self, category_id: UUID) -> MaterialCategory | None:
+        return await self._repo.get(category_id)
+
+    async def list(
+        self,
+        *,
+        page: PageParams,
+        common_filter: BaseFilter | None = None,
+        filters: Mapping[str, object] | None = None,
+        extra_criteria: Sequence[ColumnElement[bool]] | None = None,
+    ) -> tuple[Sequence[MaterialCategory], int]:
+        return await self._repo.list(
+            page=page,
+            common_filter=common_filter,
+            filters=filters,
+            extra_criteria=extra_criteria,
+        )
+
+    async def sum_material_stock(
+        self,
+        *,
+        common_filter: BaseFilter | None = None,
+        filters: Mapping[str, object] | None = None,
+        extra_criteria: Sequence[ColumnElement[bool]] | None = None,
+    ) -> tuple[Decimal, Decimal]:
+        criteria = self._repo._criteria(
+            filters=filters,
+            common_filter=common_filter,
+            extra_criteria=extra_criteria,
+        )
+        row = (
+            await self.session.execute(
+                select(
+                    func.coalesce(func.sum(MaterialCategory.rolls_on_hand), 0),
+                    func.coalesce(func.sum(MaterialCategory.total_kg), 0),
+                ).where(*criteria),
+            )
+        ).one()
+        return Decimal(str(row[0])), Decimal(str(row[1]))
+
+    async def create(self, values: Mapping[str, object]) -> MaterialCategory:
+        return await self._repo.create(values)
+
+    async def update(
+        self, category_id: UUID, values: Mapping[str, object]
+    ) -> MaterialCategory | None:
+        return await self._repo.update(category_id, values)
+
+    async def soft_delete(self, category_id: UUID) -> MaterialCategory | None:
+        return await self._repo.soft_delete(category_id)
+
+    async def count_active_children(
+        self,
+        parent_id: UUID,
+        *,
+        category_kind: MaterialCategoryKind | None = None,
+    ) -> int:
+        criteria = [
+            MaterialCategory.parent_id == parent_id,
+            MaterialCategory.deleted_at.is_(None),
+        ]
+        if category_kind is not None:
+            criteria.append(MaterialCategory.category_kind == category_kind.value)
+        total = await self.session.scalar(
+            select(func.count()).select_from(MaterialCategory).where(*criteria)
+        )
+        return int(total or 0)
+
+    async def micron_ids_for_product(self, product_id: UUID) -> list[UUID]:
+        return await self.micron_ids_for_products([product_id])
+
+    async def product_ids_for_company(self, company_id: UUID) -> list[UUID]:
+        result = await self.session.execute(
+            select(MaterialCategory.id).where(
+                MaterialCategory.company_id == company_id,
+                MaterialCategory.category_kind == MaterialCategoryKind.PRODUCT.value,
+                MaterialCategory.parent_id.is_(None),
+                MaterialCategory.deleted_at.is_(None),
+            )
+        )
+        return list(result.scalars().all())
+
+    async def micron_ids_for_products(self, product_ids: Sequence[UUID]) -> list[UUID]:
+        unique = list(dict.fromkeys(product_ids))
+        if not unique:
+            return []
+        result = await self.session.execute(
+            select(MaterialCategory.id).where(
+                MaterialCategory.parent_id.in_(unique),
+                MaterialCategory.category_kind == MaterialCategoryKind.MICRON.value,
+                MaterialCategory.deleted_at.is_(None),
+            )
+        )
+        return list(result.scalars().all())
+
+    async def sku_ids_grouped_by_micron_ids(
+        self,
+        micron_ids: Sequence[UUID],
+    ) -> dict[UUID, list[UUID]]:
+        unique = list(dict.fromkeys(micron_ids))
+        if not unique:
+            return {}
+        result = await self.session.execute(
+            select(MaterialCategory.parent_id, MaterialCategory.id).where(
+                MaterialCategory.parent_id.in_(unique),
+                MaterialCategory.category_kind == MaterialCategoryKind.SKU.value,
+                MaterialCategory.deleted_at.is_(None),
+            )
+        )
+        grouped: dict[UUID, list[UUID]] = {micron_id: [] for micron_id in unique}
+        for parent_id, sku_id in result.all():
+            if parent_id is not None:
+                grouped.setdefault(parent_id, []).append(sku_id)
+        return grouped
+
+    async def get_by_ids(self, ids: Sequence[UUID]) -> dict[UUID, MaterialCategory]:
+        unique = list(dict.fromkeys(ids))
+        if not unique:
+            return {}
+        result = await self.session.execute(
+            select(MaterialCategory).where(
+                MaterialCategory.id.in_(unique),
+                MaterialCategory.deleted_at.is_(None),
+            )
+        )
+        return {row.id: row for row in result.scalars().all()}
+
+    async def list_active_skus(self) -> Sequence[MaterialCategory]:
+        result = await self.session.execute(
+            select(MaterialCategory)
+            .where(
+                MaterialCategory.category_kind == MaterialCategoryKind.SKU.value,
+                MaterialCategory.deleted_at.is_(None),
+                MaterialCategory.is_active.is_(True),
+            )
+            .order_by(MaterialCategory.name)
+        )
+        return result.scalars().all()
+
+
+class CompanyLookupRepository:
+    def __init__(self, session: AsyncSession) -> None:
+        self.session = session
+
+    async def companies_by_ids(self, ids: Sequence[UUID]) -> dict[UUID, Company]:
+        unique = list(dict.fromkeys(ids))
+        if not unique:
+            return {}
+        result = await self.session.execute(
+            select(Company).where(
+                Company.id.in_(unique),
+                Company.deleted_at.is_(None),
+            )
+        )
+        return {row.id: row for row in result.scalars().all()}
+
+
+class UnitLookupRepository:
+    def __init__(self, session: AsyncSession) -> None:
+        self.session = session
+
+    async def get_units_by_ids(self, ids: Sequence[UUID]) -> dict[UUID, InventoryUnit]:
+        unique = list(dict.fromkeys(ids))
+        if not unique:
+            return {}
+        result = await self.session.execute(
+            select(InventoryUnit).where(
+                InventoryUnit.id.in_(unique),
+                InventoryUnit.deleted_at.is_(None),
+            )
+        )
+        return {row.id: row for row in result.scalars().all()}
+
+
+class MovementRepository:
+    def __init__(self, session: AsyncSession) -> None:
+        self.session = session
+        self._repo = BaseRepository(
+            session,
+            MaterialMovement,
+            allowed_sort_fields=frozenset({"created_at", "movement_date"}),
+            allowed_filter_fields=frozenset({"movement_date", "category_id"}),
+            search_fields=frozenset(),
+        )
+
+    async def get(self, movement_id: UUID) -> MaterialMovement | None:
+        return await self._repo.get(movement_id)
+
+    async def list_for_date(
+        self,
+        *,
+        movement_date: date,
+        page: PageParams,
+        common_filter: BaseFilter | None = None,
+    ) -> tuple[Sequence[MaterialMovement], int]:
+        criteria = [
+            MaterialMovement.movement_date == movement_date,
+            MaterialMovement.direction.in_(
+                (
+                    MaterialMovementDirection.IN.value,
+                    MaterialMovementDirection.OUT.value,
+                )
+            ),
+        ]
+        return await self._repo.list(
+            page=page,
+            common_filter=common_filter,
+            extra_criteria=criteria,
+        )
+
+    async def create(self, values: Mapping[str, object]) -> MaterialMovement:
+        return await self._repo.create(values)
+
+    async def soft_delete(self, movement_id: UUID) -> MaterialMovement | None:
+        return await self._repo.soft_delete(movement_id)
+
+    async def sum_through_date(
+        self,
+        category_id: UUID,
+        through_date: date,
+    ) -> tuple[Decimal, Decimal]:
+        rows = await self.session.execute(
+            select(
+                MaterialMovement.direction, MaterialMovement.rolls, MaterialMovement.kilograms
+            ).where(
+                MaterialMovement.category_id == category_id,
+                MaterialMovement.deleted_at.is_(None),
+                or_(
+                    MaterialMovement.direction == MaterialMovementDirection.OPENING.value,
+                    MaterialMovement.movement_date <= through_date,
+                ),
+            )
+        )
+        rolls = Decimal("0")
+        kg = Decimal("0")
+        for direction, row_rolls, row_kg in rows.all():
+            sign = (
+                Decimal("-1") if direction == MaterialMovementDirection.OUT.value else Decimal("1")
+            )
+            rolls += sign * Decimal(row_rolls)
+            kg += sign * Decimal(row_kg)
+        return rolls, kg
+
+    async def day_totals(
+        self,
+        start_date: date,
+        end_date: date,
+    ) -> dict[UUID, tuple[Decimal, Decimal, Decimal, Decimal]]:
+        rows = await self.session.execute(
+            select(
+                MaterialMovement.category_id,
+                MaterialMovement.direction,
+                func.coalesce(func.sum(MaterialMovement.rolls), 0),
+                func.coalesce(func.sum(MaterialMovement.kilograms), 0),
+            )
+            .where(
+                MaterialMovement.movement_date >= start_date,
+                MaterialMovement.movement_date <= end_date,
+                MaterialMovement.deleted_at.is_(None),
+                MaterialMovement.direction.in_(
+                    (
+                        MaterialMovementDirection.IN.value,
+                        MaterialMovementDirection.OUT.value,
+                    )
+                ),
+            )
+            .group_by(MaterialMovement.category_id, MaterialMovement.direction)
+        )
+        result: dict[UUID, tuple[Decimal, Decimal, Decimal, Decimal]] = {}
+        for category_id, direction, sum_rolls, sum_kg in rows.all():
+            current = result.get(
+                category_id, (Decimal("0"), Decimal("0"), Decimal("0"), Decimal("0"))
+            )
+            in_r, in_k, out_r, out_k = current
+            if direction == MaterialMovementDirection.IN.value:
+                in_r += Decimal(sum_rolls)
+                in_k += Decimal(sum_kg)
+            else:
+                out_r += Decimal(sum_rolls)
+                out_k += Decimal(sum_kg)
+            result[category_id] = (in_r, in_k, out_r, out_k)
+        return result
+
+    async def category_ids_with_activity_on(self, movement_date: date) -> set[UUID]:
+        rows = await self.session.execute(
+            select(MaterialMovement.category_id)
+            .where(
+                MaterialMovement.movement_date == movement_date,
+                MaterialMovement.deleted_at.is_(None),
+                MaterialMovement.direction.in_(
+                    (
+                        MaterialMovementDirection.IN.value,
+                        MaterialMovementDirection.OUT.value,
+                    )
+                ),
+            )
+            .distinct()
+        )
+        return {row[0] for row in rows.all()}
+
+    async def purchase_price_stats_by_category_ids(
+        self,
+        category_ids: Sequence[UUID],
+    ) -> dict[UUID, PurchasePriceStats]:
+        unique = list(dict.fromkeys(category_ids))
+        if not unique:
+            return {}
+        sku = aliased(MaterialCategory)
+        micron = aliased(MaterialCategory)
+        rows = await self.session.execute(
+            select(
+                MaterialMovement.category_id,
+                func.count(),
+                func.coalesce(func.sum(MaterialMovement.kilograms), 0),
+                func.coalesce(
+                    func.sum(MaterialMovement.kilograms * MaterialMovement.price_per_unit),
+                    0,
+                ),
+                func.coalesce(func.sum(MaterialMovement.price_per_unit), 0),
+            )
+            .select_from(MaterialMovement)
+            .join(sku, MaterialMovement.category_id == sku.id)
+            .join(micron, sku.parent_id == micron.id)
+            .where(
+                MaterialMovement.category_id.in_(unique),
+                MaterialMovement.deleted_at.is_(None),
+                MaterialMovement.direction.in_(
+                    (
+                        MaterialMovementDirection.IN.value,
+                        MaterialMovementDirection.OPENING.value,
+                    )
+                ),
+                MaterialMovement.price_per_unit.is_not(None),
+                or_(
+                    MaterialMovement.price_unit_id.is_(None),
+                    MaterialMovement.price_unit_id == micron.price_unit_id,
+                ),
+            )
+            .group_by(MaterialMovement.category_id)
+        )
+        return {
+            category_id: PurchasePriceStats(
+                priced_count=int(count),
+                sum_kg=Decimal(sum_kg or 0),
+                sum_kg_price=Decimal(sum_kg_price or 0),
+                sum_price=Decimal(sum_price or 0),
+            )
+            for category_id, count, sum_kg, sum_kg_price, sum_price in rows.all()
+        }
+
+    async def last_purchase_movement(self, category_id: UUID) -> MaterialMovement | None:
+        result = await self.session.execute(
+            select(MaterialMovement)
+            .where(
+                MaterialMovement.category_id == category_id,
+                MaterialMovement.deleted_at.is_(None),
+                MaterialMovement.direction.in_(
+                    (
+                        MaterialMovementDirection.IN.value,
+                        MaterialMovementDirection.OPENING.value,
+                    )
+                ),
+            )
+            .order_by(MaterialMovement.created_at.desc())
+            .limit(1)
+        )
+        return result.scalar_one_or_none()
+
+
+class MaterialHistoryRepository:
+    def __init__(self, session: AsyncSession) -> None:
+        self.session = session
+        self.movements = MovementRepository(session)
+
+    async def list_entry_refs(
+        self,
+        category_id: UUID,
+        *,
+        page: PageParams,
+    ) -> tuple[list[tuple[str, UUID]], int]:
+        """Stock ledger movement ids (IN, OUT, and opening balances; excludes material edit audit)."""
+        criteria = (
+            MaterialMovement.category_id == category_id,
+            MaterialMovement.deleted_at.is_(None),
+            MaterialMovement.direction.in_(
+                (
+                    MaterialMovementDirection.IN.value,
+                    MaterialMovementDirection.OUT.value,
+                    MaterialMovementDirection.OPENING.value,
+                )
+            ),
+        )
+        total = await self.session.scalar(
+            select(func.count()).select_from(MaterialMovement).where(*criteria),
+        )
+        offset = (page.page - 1) * page.page_size
+        rows = await self.session.execute(
+            select(literal("stock"), MaterialMovement.id)
+            .where(*criteria)
+            .order_by(MaterialMovement.created_at.desc())
+            .offset(offset)
+            .limit(page.page_size)
+        )
+        return [(str(kind), entry_id) for kind, entry_id in rows.all()], int(total or 0)
+
+    async def get_movements_by_ids(self, ids: Sequence[UUID]) -> dict[UUID, MaterialMovement]:
+        unique = list(dict.fromkeys(ids))
+        if not unique:
+            return {}
+        result = await self.session.execute(
+            select(MaterialMovement).where(
+                MaterialMovement.id.in_(unique),
+                MaterialMovement.deleted_at.is_(None),
+            )
+        )
+        return {row.id: row for row in result.scalars().all()}
+
+    async def get_audit_logs_by_ids(self, ids: Sequence[UUID]) -> dict[UUID, AuditLog]:
+        unique = list(dict.fromkeys(ids))
+        if not unique:
+            return {}
+        result = await self.session.execute(select(AuditLog).where(AuditLog.id.in_(unique)))
+        return {row.id: row for row in result.scalars().all()}
