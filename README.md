@@ -50,7 +50,7 @@ uv run uvicorn app.main:app --reload
 
 ## Deploy to AWS
 
-Lambda (container) + HTTP API via SAM. See [docs/deploy-aws.md](docs/deploy-aws.md). Merges to **`master`** deploy automatically after CI when GitHub OIDC and secrets are configured.
+Lambda (container) + HTTP API via SAM. See [docs/deploy-aws.md](docs/deploy-aws.md). Deploy is **manual**: `sam deploy` locally, or **Actions → Deploy AWS → Run workflow**.
 
 Health: `GET /health`  
 API base: `/api/v1` (auth, users, roles, organization, branches, departments, warehouses, audit logs)
