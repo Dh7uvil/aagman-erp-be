@@ -2,10 +2,10 @@
 
 import os
 from functools import lru_cache
-from typing import Annotated, Any, Literal
+from typing import Annotated, Any, Literal, Self
 from urllib.parse import quote
 
-from pydantic import AnyHttpUrl, Field, PostgresDsn, SecretStr, field_validator
+from pydantic import AnyHttpUrl, Field, PostgresDsn, SecretStr, field_validator, model_validator
 from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
 
@@ -56,7 +56,7 @@ class Settings(BaseSettings):
 
     cors_origins: Annotated[list[AnyHttpUrl], NoDecode] = Field(default_factory=list)
     auth_rate_limit_requests: int = Field(default=20, ge=1)
-    trusted_proxy_count: int = Field(default=0, ge=0)
+    trusted_proxy_count: int = Field(default=0, ge=0, description="Set to 1 behind API Gateway.")
 
     upload_dir: str = "uploads"
     max_upload_size_mb: int = Field(default=10, ge=1)
@@ -86,6 +86,13 @@ class Settings(BaseSettings):
         if not isinstance(value, str):
             return value
         return [item.strip() for item in value.split(",") if item.strip()]
+
+    @model_validator(mode="after")
+    def validate_production_storage(self) -> Self:
+        if self.env == "production" and not self.s3_bucket_name:
+            msg = "S3_BUCKET_NAME is required when ENV=production (Lambda has no persistent disk)"
+            raise ValueError(msg)
+        return self
 
 
 @lru_cache

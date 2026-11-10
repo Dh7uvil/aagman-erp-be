@@ -1,0 +1,47 @@
+name: Deploy AWS
+
+on:
+  workflow_run:
+    workflows: [CI]
+    types: [completed]
+    branches: [master]
+  workflow_dispatch:
+
+permissions:
+  id-token: write
+  contents: read
+
+concurrency:
+  group: deploy-aws-production
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    if: >
+      github.event_name == 'workflow_dispatch' ||
+      github.event.workflow_run.conclusion == 'success'
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    environment: production
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event_name == 'workflow_run' && github.event.workflow_run.head_sha || github.sha }}
+
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.AWS_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION }}
+
+      - uses: aws-actions/setup-sam@v2
+
+      - name: SAM build and deploy
+        env:
+          SAM_PARAMETER_OVERRIDES: ${{ secrets.SAM_PARAMETER_OVERRIDES }}
+        run: |
+          sam build -t infra/sam/template.yaml --config-file infra/sam/samconfig.toml
+          sam deploy \
+            --config-env prod \
+            --config-file infra/sam/samconfig.toml \
+            --no-confirm-changeset \
+            --parameter-overrides "$SAM_PARAMETER_OVERRIDES"

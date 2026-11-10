@@ -23,6 +23,10 @@ env/
 coverage.xml
 htmlcov/
 
+# AWS SAM
+.aws-sam/
+/samconfig.toml
+
 # Build artifacts
 build/
 dist/
