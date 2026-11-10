@@ -88,9 +88,15 @@ class Settings(BaseSettings):
         return [item.strip() for item in value.split(",") if item.strip()]
 
     @model_validator(mode="after")
-    def validate_production_storage(self) -> Self:
-        if self.env == "production" and not self.s3_bucket_name:
+    def validate_production(self) -> Self:
+        if self.env != "production":
+            return self
+        if not self.s3_bucket_name:
             msg = "S3_BUCKET_NAME is required when ENV=production (Lambda has no persistent disk)"
+            raise ValueError(msg)
+        dev_jwt = "dev-only-change-me-use-32-chars-min!!"
+        if self.jwt_secret.get_secret_value() == dev_jwt:
+            msg = "JWT_SECRET must be set to a production value when ENV=production"
             raise ValueError(msg)
         return self
 

@@ -18,12 +18,15 @@ Parameters:
   DatabaseUser:
     Type: String
     Default: postgres
-  DatabasePasswordSecretArn:
+  DatabasePassword:
     Type: String
-    Description: Secrets Manager ARN (plain string secret value = DB password).
-  JwtSecretArn:
+    NoEcho: true
+    Description: RDS password (set as Lambda env DATABASE_PASSWORD).
+  JwtSecret:
     Type: String
-    Description: Secrets Manager ARN (plain string, min 32 chars).
+    NoEcho: true
+    MinLength: 32
+    Description: JWT signing secret (set as Lambda env JWT_SECRET; min 32 chars).
   S3BucketName:
     Type: String
     Description: Existing S3 bucket for uploads.
@@ -32,7 +35,7 @@ Parameters:
     Description: Private subnets for Lambda (must reach RDS).
   LambdaSecurityGroupId:
     Type: AWS::EC2::SecurityGroup::Id
-    Description: Security group for Lambda ENIs (egress to RDS, S3, Secrets Manager).
+    Description: Security group for Lambda ENIs (egress to RDS, S3, ECR).
 
 Globals:
   Function:
@@ -61,18 +64,14 @@ Resources:
           DATABASE_PORT: !Ref DatabasePort
           DATABASE_NAME: !Ref DatabaseName
           DATABASE_USER: !Ref DatabaseUser
-          DATABASE_PASSWORD: !Sub "{{resolve:secretsmanager:${DatabasePasswordSecretArn}:SecretString}}"
-          JWT_SECRET: !Sub "{{resolve:secretsmanager:${JwtSecretArn}:SecretString}}"
+          DATABASE_PASSWORD: !Ref DatabasePassword
+          JWT_SECRET: !Ref JwtSecret
           DATABASE_POOL_SIZE: "2"
           DATABASE_MAX_OVERFLOW: "0"
           CORS_ORIGINS: !Ref CorsOrigins
           S3_BUCKET_NAME: !Ref S3BucketName
           AWS_REGION: !Ref AWS::Region
       Policies:
-        - AWSSecretsManagerGetSecretValuePolicy:
-            SecretArn: !Ref DatabasePasswordSecretArn
-        - AWSSecretsManagerGetSecretValuePolicy:
-            SecretArn: !Ref JwtSecretArn
         - S3CrudPolicy:
             BucketName: !Ref S3BucketName
       Events:
