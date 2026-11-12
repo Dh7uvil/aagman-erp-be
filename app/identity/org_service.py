@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from urllib.parse import quote
-from uuid import UUID, uuid4
+from uuid import UUID
 
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -17,7 +17,7 @@ from app.core.config import get_settings
 from app.core.enums import IDENTITY_MODULE, AddressType, AuditAction, BranchStatus
 from app.core.exceptions import DuplicateResourceError, ResourceNotFoundError, ValidationError
 from app.db.session import transaction
-from app.identity import local_storage
+from app.identity import storage as org_storage
 from app.identity.models import Address, Branch, Department, Organization, User
 from app.identity.org_repository import OrganizationRepository
 from app.identity.repository import AccessRepository
@@ -38,7 +38,7 @@ from app.identity.schemas import (
     UserSummary,
     format_address_label,
 )
-from app.integrations.storage import S3Storage, build_org_logo_key, get_optional_storage
+from app.integrations.storage import S3Storage, get_optional_storage
 
 LOGO_MAX_SIZE_MB = 2
 LOGO_ALLOWED_MIME_TYPES = (MIME_JPEG, MIME_PNG, MIME_WEBP)
@@ -56,13 +56,6 @@ def _address_response(address: Address | None) -> AddressResponse | None:
     if address is None:
         return None
     return AddressResponse.model_validate(address)
-
-
-def _unique_logo_filename(filename: str) -> str:
-    """Keep replacements from colliding on the same object key."""
-
-    ext = filename.rsplit(".", 1)[-1] if "." in filename else ""
-    return f"{uuid4().hex}.{ext}" if ext else uuid4().hex
 
 
 def _logo_url(logo_storage_key: str | None) -> str | None:
@@ -101,7 +94,7 @@ class OrganizationService:
             raise ResourceNotFoundError("Organization logo not found")
         if self.storage is not None:
             return await self.storage.download(key=org.logo_storage_key)
-        return local_storage.read_logo(org.logo_storage_key)
+        return org_storage.read_logo(org.logo_storage_key)
 
     async def update_organization(
         self,
@@ -169,14 +162,10 @@ class OrganizationService:
         )
         async with transaction(self.session):
             org = await self._require_organization(for_update=True)
-            stored_name = _unique_logo_filename(validated.filename)
-            if self.storage is not None:
-                new_key = build_org_logo_key(
-                    organization_id=org.id,
-                    filename=stored_name,
-                )
-            else:
-                new_key = local_storage.logo_relative_key(stored_name)
+            new_key = org_storage.build_org_logo_object_key(
+                organization_id=org.id,
+                filename=validated.filename,
+            )
             old_key = org.logo_storage_key
             old_values = self._organization_snapshot(org)
             org.logo_storage_key = new_key
@@ -192,9 +181,9 @@ class OrganizationService:
                 if old_key and old_key != new_key:
                     await self.storage.delete(key=old_key)
             else:
-                local_storage.write_logo(new_key, validated.content)
+                org_storage.write_logo(new_key, validated.content)
                 if old_key and old_key != new_key:
-                    local_storage.delete_logo(old_key)
+                    org_storage.delete_logo(old_key)
             await self.audit.write(
                 user_id=actor_user_id,
                 action=AuditAction.UPDATE,
@@ -221,7 +210,7 @@ class OrganizationService:
             if self.storage is not None:
                 await self.storage.delete(key=old_key)
             else:
-                local_storage.delete_logo(old_key)
+                org_storage.delete_logo(old_key)
             await self.audit.write(
                 user_id=actor_user_id,
                 action=AuditAction.UPDATE,

@@ -1,16 +1,17 @@
-"""Local disk storage for organization logos."""
+"""Local and S3 storage helpers for the organization logo."""
 
 from __future__ import annotations
 
 import mimetypes
 from pathlib import Path
+from uuid import UUID, uuid4
 
 from app.core.config import get_settings
 
 
-def logo_relative_key(filename: str) -> str:
-    safe = filename.replace("/", "_").replace("\\", "_").strip() or "logo"
-    return f"organization/logo/{safe}"
+def logo_relative_key(*, organization_id: UUID, filename: str) -> str:
+    safe = filename.replace("/", "_").replace("\\", "_").strip() or "file"
+    return f"organization/{organization_id}/logo/{uuid4().hex[:8]}_{safe}"
 
 
 def logo_absolute_path(storage_key: str) -> Path:
@@ -38,3 +39,7 @@ def delete_logo(storage_key: str) -> None:
     path = logo_absolute_path(storage_key)
     if path.is_file():
         path.unlink()
+
+
+def build_org_logo_object_key(*, organization_id: UUID, filename: str) -> str:
+    return logo_relative_key(organization_id=organization_id, filename=filename)

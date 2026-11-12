@@ -5,8 +5,6 @@ from __future__ import annotations
 import asyncio
 from functools import lru_cache
 from typing import Any, Protocol, cast
-from uuid import UUID
-
 from botocore.config import Config  # type: ignore[import-untyped]
 from botocore.exceptions import BotoCoreError, ClientError  # type: ignore[import-untyped]
 
@@ -24,12 +22,6 @@ class S3ClientProtocol(Protocol):
     def get_object(self, **kwargs: Any) -> Any: ...
 
     def generate_presigned_url(self, *args: Any, **kwargs: Any) -> str: ...
-
-
-def build_org_logo_key(*, organization_id: UUID, filename: str) -> str:
-    """Build the object key for the singleton organization's logo."""
-
-    return f"{organization_id}/organization/logo/{filename}"
 
 
 class S3Storage:

@@ -5,7 +5,7 @@ Single-tenant FastAPI backend for identity, organization settings, and shared pr
 ## Requirements
 
 - Python 3.13
-- PostgreSQL
+- PostgreSQL 18 (production RDS: **18.3-R2**; CI uses `postgres:18.3`)
 - [uv](https://docs.astral.sh/uv/)
 
 ## Setup
